@@ -1,0 +1,27 @@
+# 환경 변수 / 비밀 값 (절대 커밋하지 않음)
+.env
+.env.*
+!.env.example
+
+# 로컬 DB 파일
+*.db
+*.sqlite
+*.sqlite3
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# 가상환경
+venv/
+.venv/
+env/
+
+# 에디터 / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
