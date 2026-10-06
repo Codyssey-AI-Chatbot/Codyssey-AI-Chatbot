@@ -1,5 +1,8 @@
 """인증된 채팅 API 라우터."""
 
+from time import perf_counter
+from uuid import uuid4
+
 from fastapi import APIRouter, Depends, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -9,6 +12,7 @@ from app.ai_client import AIClient, get_ai_client
 from app.auth import get_current_user
 from app.context import build_chat_messages, get_recent_chat_logs
 from app.db import get_db
+from app.logging_conf import log_chat_event
 from app.models import ChatLog, User
 
 router = APIRouter()
@@ -37,6 +41,14 @@ async def create_chat(
 ) -> ChatResponse | JSONResponse:
     """검증된 질문의 AI 답변을 생성하고 성공한 대화만 저장한다."""
 
+    request_id = uuid4().hex
+    log_chat_event(
+        "request_received",
+        request_id=request_id,
+        user_id=user.id,
+        path="/api/chat",
+    )
+
     if not payload.message.strip():
         return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -54,10 +66,49 @@ async def create_chat(
 
     recent_logs = get_recent_chat_logs(db, user.id)
     messages = build_chat_messages(recent_logs, payload.message)
-    answer = await ai_client.complete(messages)
+
+    ai_started_at = perf_counter()
+    log_chat_event(
+        "ai_call_start",
+        request_id=request_id,
+        user_id=user.id,
+    )
+    try:
+        answer = await ai_client.complete(messages)
+    except Exception as exc:
+        log_chat_event(
+            "ai_call_fail",
+            request_id=request_id,
+            user_id=user.id,
+            error_type=type(exc).__name__,
+        )
+        raise
+    latency_ms = round((perf_counter() - ai_started_at) * 1_000)
+    log_chat_event(
+        "ai_call_success",
+        request_id=request_id,
+        user_id=user.id,
+        latency_ms=latency_ms,
+    )
 
     chat_log = ChatLog(user_id=user.id, question=payload.message, answer=answer)
-    db.add(chat_log)
-    db.commit()
+    try:
+        db.add(chat_log)
+        db.commit()
+        chat_id = chat_log.id
+    except Exception as exc:
+        log_chat_event(
+            "db_save_fail",
+            request_id=request_id,
+            user_id=user.id,
+            error_type=type(exc).__name__,
+        )
+        raise
+    log_chat_event(
+        "db_save_success",
+        request_id=request_id,
+        user_id=user.id,
+        chat_id=chat_id,
+    )
 
-    return ChatResponse(answer=answer, chat_id=chat_log.id)
+    return ChatResponse(answer=answer, chat_id=chat_id)
