@@ -1,6 +1,7 @@
 """인증된 채팅 API의 입력 검증, AI 호출, 저장 테스트."""
 
 from collections.abc import Sequence
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import select
@@ -54,6 +55,36 @@ def signup_and_login(client) -> int:
 def load_chat_logs() -> list[ChatLog]:
     with SessionLocal() as db:
         return list(db.scalars(select(ChatLog).order_by(ChatLog.id)))
+
+
+def create_test_user(username: str) -> int:
+    with SessionLocal() as db:
+        user = User(username=username, password_hash="unused-test-hash")
+        db.add(user)
+        db.commit()
+        return user.id
+
+
+def add_chat_history(
+    user_id: int,
+    count: int,
+    *,
+    prefix: str,
+    start: datetime,
+) -> None:
+    with SessionLocal() as db:
+        db.add_all(
+            [
+                ChatLog(
+                    user_id=user_id,
+                    question=f"{prefix} 질문 {index}",
+                    answer=f"{prefix} 답변 {index}",
+                    created_at=start + timedelta(minutes=index),
+                )
+                for index in range(1, count + 1)
+            ]
+        )
+        db.commit()
 
 
 def test_chat_requires_login(client, fake_ai):
@@ -126,3 +157,66 @@ def test_chat_ai_failure_does_not_save_log(client, fake_ai):
 
     assert len(fake_ai.calls) == 1
     assert load_chat_logs() == []
+
+
+def test_chat_context_without_history_sends_only_current_question(client, fake_ai):
+    signup_and_login(client)
+
+    response = client.post("/api/chat", json={"message": "첫 질문"})
+
+    assert response.status_code == 200
+    assert fake_ai.calls == [[ChatMessage(role="user", content="첫 질문")]]
+
+
+def test_chat_context_uses_recent_five_in_chronological_order(client, fake_ai):
+    user_id = signup_and_login(client)
+    add_chat_history(
+        user_id,
+        7,
+        prefix="내 대화",
+        start=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+
+    response = client.post("/api/chat", json={"message": "현재 질문"})
+
+    assert response.status_code == 200
+    assert fake_ai.calls == [
+        [
+            ChatMessage(role="user", content="내 대화 질문 3"),
+            ChatMessage(role="assistant", content="내 대화 답변 3"),
+            ChatMessage(role="user", content="내 대화 질문 4"),
+            ChatMessage(role="assistant", content="내 대화 답변 4"),
+            ChatMessage(role="user", content="내 대화 질문 5"),
+            ChatMessage(role="assistant", content="내 대화 답변 5"),
+            ChatMessage(role="user", content="내 대화 질문 6"),
+            ChatMessage(role="assistant", content="내 대화 답변 6"),
+            ChatMessage(role="user", content="내 대화 질문 7"),
+            ChatMessage(role="assistant", content="내 대화 답변 7"),
+            ChatMessage(role="user", content="현재 질문"),
+        ]
+    ]
+    assert sum(
+        message.content == "현재 질문" for message in fake_ai.calls[0]
+    ) == 1
+
+
+def test_chat_context_excludes_other_users_history(client, fake_ai):
+    current_user_id = signup_and_login(client)
+    other_user_id = create_test_user("other_context_user")
+    start = datetime(2026, 2, 1, tzinfo=timezone.utc)
+    add_chat_history(current_user_id, 1, prefix="내 대화", start=start)
+    add_chat_history(other_user_id, 3, prefix="다른 사용자", start=start)
+
+    response = client.post("/api/chat", json={"message": "격리 확인 질문"})
+
+    assert response.status_code == 200
+    assert fake_ai.calls == [
+        [
+            ChatMessage(role="user", content="내 대화 질문 1"),
+            ChatMessage(role="assistant", content="내 대화 답변 1"),
+            ChatMessage(role="user", content="격리 확인 질문"),
+        ]
+    ]
+    assert all(
+        "다른 사용자" not in message.content for message in fake_ai.calls[0]
+    )
