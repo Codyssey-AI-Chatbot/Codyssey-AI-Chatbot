@@ -1,6 +1,7 @@
 """인증된 채팅 API 라우터."""
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -10,6 +11,7 @@ from app.db import get_db
 from app.models import User
 
 router = APIRouter()
+MAX_MESSAGE_LENGTH = 2_000
 
 
 class ChatRequest(BaseModel):
@@ -27,12 +29,27 @@ class ChatResponse(BaseModel):
 
 @router.post("/api/chat", response_model=ChatResponse)
 async def create_chat(
-    _payload: ChatRequest,
+    payload: ChatRequest,
     _user: User = Depends(get_current_user),
     _db: Session = Depends(get_db),
     _ai_client: AIClient = Depends(get_ai_client),
-) -> ChatResponse:
+) -> ChatResponse | JSONResponse:
     """채팅 처리 의존성을 연결한다. 실제 호출과 저장은 B-06에서 구현한다."""
+
+    if not payload.message.strip():
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={"error": "INVALID_MESSAGE", "message": "메시지를 입력해 주세요."},
+        )
+
+    if len(payload.message) > MAX_MESSAGE_LENGTH:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={
+                "error": "INVALID_MESSAGE",
+                "message": f"메시지는 {MAX_MESSAGE_LENGTH:,}자 이하로 입력해 주세요.",
+            },
+        )
 
     raise HTTPException(
         status_code=status.HTTP_501_NOT_IMPLEMENTED,
