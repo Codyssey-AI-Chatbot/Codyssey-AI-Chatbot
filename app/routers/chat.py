@@ -5,8 +5,9 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.ai_client import AIClient, ChatMessage, get_ai_client
+from app.ai_client import AIClient, get_ai_client
 from app.auth import get_current_user
+from app.context import build_chat_messages, get_recent_chat_logs
 from app.db import get_db
 from app.models import ChatLog, User
 
@@ -51,9 +52,9 @@ async def create_chat(
             },
         )
 
-    answer = await ai_client.complete(
-        [ChatMessage(role="user", content=payload.message)]
-    )
+    recent_logs = get_recent_chat_logs(db, user.id)
+    messages = build_chat_messages(recent_logs, payload.message)
+    answer = await ai_client.complete(messages)
 
     chat_log = ChatLog(user_id=user.id, question=payload.message, answer=answer)
     db.add(chat_log)
