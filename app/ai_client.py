@@ -7,7 +7,12 @@
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Literal, Protocol
+
+from openai import AsyncOpenAI
+
+from app.config import settings
 
 
 ChatRole = Literal["system", "user", "assistant"]
@@ -29,11 +34,39 @@ class AIClient(Protocol):
         ...
 
 
+class OpenAIChatClient:
+    """OpenAI 호환 Chat Completions API를 사용하는 구현체."""
+
+    def __init__(self, client: AsyncOpenAI, model: str) -> None:
+        self._client = client
+        self._model = model
+
+    async def complete(self, messages: Sequence[ChatMessage]) -> str:
+        completion = await self._client.chat.completions.create(
+            model=self._model,
+            messages=[
+                {"role": message.role, "content": message.content}
+                for message in messages
+            ],
+        )
+        return completion.choices[0].message.content or ""
+
+
+@lru_cache
 def get_ai_client() -> AIClient:
     """FastAPI 의존성으로 사용할 AI 클라이언트 팩토리.
 
-    실제 공급자 구현은 B-02에서 연결한다. 그전까지 호출되면 조용히
-    실패하거나 가짜 응답을 만들지 않고 설정되지 않았음을 명확히 알린다.
+    설정은 모듈의 상수나 실제 키로 복제하지 않고 ``app.config.settings``에서
+    읽는다. 캐시된 인스턴스를 반환해 요청마다 HTTP 클라이언트를 새로 만들지
+    않으며, 테스트에서는 FastAPI의 dependency override로 교체할 수 있다.
     """
 
-    raise RuntimeError("AI client is not configured")
+    api_key = settings.ai_api_key
+    if api_key is None or not api_key.get_secret_value():
+        raise RuntimeError("AI_API_KEY is not configured")
+
+    client = AsyncOpenAI(
+        api_key=api_key.get_secret_value(),
+        base_url=settings.ai_base_url,
+    )
+    return OpenAIChatClient(client=client, model=settings.ai_model)
