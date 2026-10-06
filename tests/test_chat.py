@@ -2,13 +2,15 @@
 
 from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
+import logging
+import re
 
 import pytest
 from sqlalchemy import select
 
 from app.ai_client import ChatMessage, get_ai_client
-from app.db import SessionLocal
-from app.errors import AIServiceError
+from app.db import SessionLocal, get_db
+from app.errors import AIServiceError, AITimeoutError
 from app.main import app
 from app.models import ChatLog, User
 
@@ -29,6 +31,28 @@ class FakeAIClient:
         if self.error is not None:
             raise self.error
         return self.answer
+
+
+class FailOnceCommitSession:
+    """실제 테스트 세션을 사용하되 첫 commit만 실패시키는 프록시."""
+
+    def __init__(self, wrapped) -> None:
+        self.wrapped = wrapped
+        self.failed = False
+        self.rollback_calls = 0
+
+    def __getattr__(self, name):
+        return getattr(self.wrapped, name)
+
+    def commit(self) -> None:
+        if not self.failed:
+            self.failed = True
+            raise RuntimeError("database detail must stay private")
+        self.wrapped.commit()
+
+    def rollback(self) -> None:
+        self.rollback_calls += 1
+        self.wrapped.rollback()
 
 
 @pytest.fixture()
@@ -85,6 +109,21 @@ def add_chat_history(
             ]
         )
         db.commit()
+
+
+def chat_event_messages(caplog) -> list[str]:
+    return [record.getMessage() for record in caplog.records if record.name == "app.chat"]
+
+
+def assert_events_share_request_id(messages: list[str], events: list[str]) -> str:
+    assert [message.split(maxsplit=1)[0] for message in messages] == events
+    request_ids = []
+    for message in messages:
+        match = re.search(r"\brequest_id=([0-9a-f]{32})\b", message)
+        assert match is not None
+        request_ids.append(match.group(1))
+    assert len(set(request_ids)) == 1
+    return request_ids[0]
 
 
 def test_chat_requires_login(client, fake_ai):
@@ -152,9 +191,10 @@ def test_chat_ai_failure_does_not_save_log(client, fake_ai):
     signup_and_login(client)
     fake_ai.error = AIServiceError("test AI failure")
 
-    with pytest.raises(AIServiceError, match="test AI failure"):
-        client.post("/api/chat", json={"message": "실패할 질문"})
+    response = client.post("/api/chat", json={"message": "실패할 질문"})
 
+    assert response.status_code == 502
+    assert response.json()["error"] == "AI_SERVICE_ERROR"
     assert len(fake_ai.calls) == 1
     assert load_chat_logs() == []
 
@@ -220,3 +260,125 @@ def test_chat_context_excludes_other_users_history(client, fake_ai):
     assert all(
         "다른 사용자" not in message.content for message in fake_ai.calls[0]
     )
+
+
+def test_chat_timeout_returns_504_and_logs_failure(client, fake_ai, caplog):
+    signup_and_login(client)
+    fake_ai.error = AITimeoutError("private provider timeout detail")
+    caplog.set_level(logging.INFO, logger="app.chat")
+
+    response = client.post("/api/chat", json={"message": "타임아웃 질문"})
+
+    assert response.status_code == 504
+    assert response.json()["error"] == "AI_TIMEOUT"
+    assert load_chat_logs() == []
+    messages = chat_event_messages(caplog)
+    assert_events_share_request_id(
+        messages,
+        ["request_received", "ai_call_start", "ai_call_fail"],
+    )
+    assert "ai_call_success" not in "\n".join(messages)
+    assert "db_save_success" not in "\n".join(messages)
+
+
+def test_chat_service_failure_returns_502_without_sensitive_logs(
+    client,
+    fake_ai,
+    caplog,
+):
+    signup_and_login(client)
+    question = "로그에 남으면 안 되는 질문 전문"
+    api_key = "private-api-key-value"
+    provider_detail = f"provider failure with {api_key}"
+    fake_ai.error = AIServiceError(provider_detail)
+    caplog.set_level(logging.INFO, logger="app.chat")
+
+    response = client.post("/api/chat", json={"message": question})
+
+    assert response.status_code == 502
+    assert response.json()["error"] == "AI_SERVICE_ERROR"
+    assert provider_detail not in response.text
+    messages = chat_event_messages(caplog)
+    assert_events_share_request_id(
+        messages,
+        ["request_received", "ai_call_start", "ai_call_fail"],
+    )
+    log_text = "\n".join(messages)
+    assert question not in log_text
+    assert provider_detail not in log_text
+    assert api_key not in log_text
+    assert load_chat_logs() == []
+
+
+def test_chat_success_logs_events_without_question_answer_or_key(
+    client,
+    fake_ai,
+    caplog,
+):
+    signup_and_login(client)
+    question = "비공개 성공 질문 전문"
+    answer = "비공개 성공 답변 전문"
+    api_key = "another-private-api-key"
+    fake_ai.answer = answer
+    caplog.set_level(logging.INFO, logger="app.chat")
+
+    response = client.post("/api/chat", json={"message": question})
+
+    assert response.status_code == 200
+    messages = chat_event_messages(caplog)
+    assert_events_share_request_id(
+        messages,
+        [
+            "request_received",
+            "ai_call_start",
+            "ai_call_success",
+            "db_save_success",
+        ],
+    )
+    success_log = next(message for message in messages if message.startswith("ai_call_success "))
+    assert re.search(r"\blatency_ms=\d+\b", success_log)
+    log_text = "\n".join(messages)
+    assert question not in log_text
+    assert answer not in log_text
+    assert api_key not in log_text
+
+
+def test_chat_db_failure_rolls_back_and_next_request_succeeds(
+    client,
+    fake_ai,
+    caplog,
+):
+    signup_and_login(client)
+    wrapped_session = SessionLocal()
+    failing_session = FailOnceCommitSession(wrapped_session)
+
+    def override_get_db():
+        yield failing_session
+
+    app.dependency_overrides[get_db] = override_get_db
+    caplog.set_level(logging.INFO, logger="app.chat")
+    try:
+        failed = client.post("/api/chat", json={"message": "저장 실패 질문"})
+        recovered = client.post("/api/chat", json={"message": "복구 후 질문"})
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+        wrapped_session.close()
+
+    assert failed.status_code == 500
+    assert failed.json()["error"] == "DB_SAVE_ERROR"
+    assert failing_session.rollback_calls == 1
+    assert recovered.status_code == 200
+
+    logs = load_chat_logs()
+    assert [log.question for log in logs] == ["복구 후 질문"]
+
+    grouped_events: dict[str, list[str]] = {}
+    for message in chat_event_messages(caplog):
+        match = re.search(r"\brequest_id=([0-9a-f]{32})\b", message)
+        assert match is not None
+        grouped_events.setdefault(match.group(1), []).append(message.split(maxsplit=1)[0])
+
+    assert list(grouped_events.values()) == [
+        ["request_received", "ai_call_start", "ai_call_success", "db_save_fail"],
+        ["request_received", "ai_call_start", "ai_call_success", "db_save_success"],
+    ]
