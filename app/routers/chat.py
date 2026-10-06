@@ -1,14 +1,14 @@
 """인증된 채팅 API 라우터."""
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.ai_client import AIClient, get_ai_client
+from app.ai_client import AIClient, ChatMessage, get_ai_client
 from app.auth import get_current_user
 from app.db import get_db
-from app.models import User
+from app.models import ChatLog, User
 
 router = APIRouter()
 MAX_MESSAGE_LENGTH = 2_000
@@ -30,11 +30,11 @@ class ChatResponse(BaseModel):
 @router.post("/api/chat", response_model=ChatResponse)
 async def create_chat(
     payload: ChatRequest,
-    _user: User = Depends(get_current_user),
-    _db: Session = Depends(get_db),
-    _ai_client: AIClient = Depends(get_ai_client),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    ai_client: AIClient = Depends(get_ai_client),
 ) -> ChatResponse | JSONResponse:
-    """채팅 처리 의존성을 연결한다. 실제 호출과 저장은 B-06에서 구현한다."""
+    """검증된 질문의 AI 답변을 생성하고 성공한 대화만 저장한다."""
 
     if not payload.message.strip():
         return JSONResponse(
@@ -51,7 +51,12 @@ async def create_chat(
             },
         )
 
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Chat processing is not implemented yet",
+    answer = await ai_client.complete(
+        [ChatMessage(role="user", content=payload.message)]
     )
+
+    chat_log = ChatLog(user_id=user.id, question=payload.message, answer=answer)
+    db.add(chat_log)
+    db.commit()
+
+    return ChatResponse(answer=answer, chat_id=chat_log.id)
