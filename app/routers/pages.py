@@ -24,3 +24,11 @@ def index() -> RedirectResponse:
 @router.get("/signup", response_class=HTMLResponse)
 def signup_page(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(request, "signup.html")
+
+
+@router.get("/login", response_class=HTMLResponse)
+def login_page(request: Request) -> HTMLResponse:
+    # 회원가입 직후에는 /login?signup=1 로 들어오므로 완료 안내를 함께 보여 준다.
+    return templates.TemplateResponse(
+        request, "login.html", {"signed_up": "signup" in request.query_params}
+    )

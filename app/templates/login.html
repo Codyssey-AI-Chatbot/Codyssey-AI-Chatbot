@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}로그인 - Codyssey AI 챗봇{% endblock %}
+
+{% block content %}
+<section class="card">
+  <h1>로그인</h1>
+  {% if signed_up %}
+  <p class="notice">회원가입이 완료되었습니다. 로그인해 주세요.</p>
+  {% endif %}
+  <form data-api="/api/auth/login" data-next="/chat" novalidate>
+    <p class="form-error" role="alert"></p>
+
+    <div class="field">
+      <label for="username">아이디</label>
+      <input id="username" name="username" type="text" autocomplete="username" required autofocus>
+    </div>
+
+    <div class="field">
+      <label for="password">비밀번호</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+    </div>
+
+    <button class="button" type="submit">로그인</button>
+  </form>
+  <p class="hint">계정이 없나요? <a href="/signup">회원가입</a></p>
+</section>
+{% endblock %}
+
+{% block scripts %}<script src="/static/auth.js"></script>{% endblock %}
