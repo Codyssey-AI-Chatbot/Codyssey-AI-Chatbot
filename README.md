@@ -628,7 +628,7 @@ Render 에 배포된 서비스라면 서비스 페이지의 **Shell** 탭에서 
 
 - **PR #4 `feature/project-setup`** (7 커밋): `.gitignore`/`.env.example`, 버전 고정 `requirements.txt`, 환경 변수 로딩(`config.py`), SQLite 연결·세션·Base(`db.py`), `User`/`ChatLog` 모델, FastAPI 앱과 라우터 등록·`/health`, PR 템플릿과 팀 역할 문서.
 - **PR #5 `feature/auth-signup-login`** (4 커밋): 세션 비밀키 설정, argon2 비밀번호 해싱과 `get_current_user`/`get_current_user_or_redirect` 의존성, 회원가입·로그인·로그아웃·내 정보 API 와 입력 검증, 세션 미들웨어와 `AuthError` 핸들러. (계획상 PR3 "접근 제어" 는 이 PR 에 함께 포함)
-- **PR #6 `feature/auth-tests`** (2 커밋): pytest 설정과 공용 `client` 픽스처(임시 DB), 인증 API 테스트 14개.
+- **PR #6 `feature/auth-tests`** (2 커밋): pytest 설정과 공용 `client` 픽스처(임시 DB), 인증 API 테스트 16개.
 
 ### B — @Wattamelon (AI 챗봇 파이프라인) · 14 커밋 · PR 4개
 
@@ -643,7 +643,7 @@ Render 에 배포된 서비스라면 서비스 페이지의 **Shell** 탭에서 
 - **PR #22 `feature/chat-ui`** (3 커밋): 로그인 보호된 `/chat` 페이지 마크업, `chat.js`(fetch 로 질문 전송·말풍선 표시), 로딩 표시·입력 잠금·에러 코드 말풍선·세션 만료 처리.
 - **PR #23 `feature/log-view`** (4 커밋): `GET /api/me/chats` 내 로그 조회 API, `/history` 내 대화 기록 화면과 채팅 화면의 최근 대화 복원, `scripts/check_logs.sql`·`check_logs.py`, 로그 조회 테스트 8개.
 - **PR #24 `feature/deploy`** (1 커밋): Render Blueprint `render.yaml` (헬스체크, 비밀 값은 대시보드 입력).
-- **PR `docs/readme`** (2 커밋): 이 README 전체, `docs/team-roles.md` 담당자 갱신.
+- **PR #25 `docs/readme`** (3 커밋): 이 README 전체, `docs/team-roles.md` 담당자 갱신.
 
 ---
 
@@ -685,8 +685,8 @@ python -m pytest -q        # 44 passed
 
 | 파일 | 개수 | 확인하는 것 | 작성 |
 |---|---|---|---|
-| `tests/test_auth.py` | 14 | 가입(해시 저장, 중복, 아이디/비밀번호 검증), 로그인(실패 시 정보 비노출), 로그아웃, 삭제된 사용자 세션 거부, 화면용 의존성의 리다이렉트 | A |
-| `tests/test_chat.py` | 15 | 로그인 필요, 빈 입력·2,000자 검증, 저장, AI 실패 시 미저장, 최근 5개 컨텍스트와 사용자 격리, 타임아웃 504·실패 502·DB 실패 500, 로그 이벤트와 `request_id`, 민감정보 비노출 | B |
+| `tests/test_auth.py` | 16 | 가입(해시 저장, 중복, 아이디/비밀번호 검증), 로그인(실패 시 정보 비노출), 로그아웃, 삭제된 사용자 세션 거부, 화면용 의존성의 리다이렉트 | A |
+| `tests/test_chat.py` | 13 | 로그인 필요, 빈 입력·2,000자 검증, 저장, AI 실패 시 미저장, 최근 5개 컨텍스트와 사용자 격리, 타임아웃 504·실패 502·DB 실패 500, 로그 이벤트와 `request_id`, 민감정보 비노출 | B |
 | `tests/test_pages.py` | 7 | `/` 리다이렉트, 가입·로그인 페이지 렌더링, 정적 파일, `/chat` 접근 제어 | C |
 | `tests/test_logs.py` | 8 | `/api/me/chats` 로그인 필요·본인 로그만·정렬·limit/offset·범위 검증, `/history` 접근 제어·KST 표시·빈 상태, `check_logs.sql` 실행 결과 | C |
 
