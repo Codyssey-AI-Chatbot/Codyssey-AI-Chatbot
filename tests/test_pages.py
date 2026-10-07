@@ -37,3 +37,28 @@ def test_static_stylesheet_is_served(client):
 
     assert response.status_code == 200
     assert "text/css" in response.headers["content-type"]
+
+
+CREDENTIALS = {"username": "page_tester", "password": "correct-horse"}
+
+
+def login(client):
+    assert client.post("/api/auth/signup", json=CREDENTIALS).status_code == 201
+    assert client.post("/api/auth/login", json=CREDENTIALS).status_code == 200
+
+
+def test_chat_page_redirects_anonymous_user_to_login(client):
+    response = client.get("/chat", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/login"
+
+
+def test_chat_page_renders_for_logged_in_user(client):
+    login(client)
+
+    response = client.get("/chat")
+
+    assert response.status_code == 200
+    assert 'id="chat-form"' in response.text
+    assert CREDENTIALS["username"] in response.text  # 상단 바에 사용자명 표시
