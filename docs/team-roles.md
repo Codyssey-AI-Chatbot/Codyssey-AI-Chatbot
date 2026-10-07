@@ -4,7 +4,7 @@
 
 | | A — 인증·DB 기반 | B — AI 챗봇 파이프라인 | C — UI·로그 조회·배포·문서 |
 |---|---|---|---|
-| 담당자 | @junhnno | (미정) | (미정) |
+| 담당자 | @junhnno | @Wattamelon | @ADOHI |
 | 요구사항 | 2 (인증/접근 제어), 4의 저장 부분 | 3 (AI 호출·컨텍스트), 5 (로그·예외·검증) | 1 (웹 UI), 4의 조회 부분, 6 (배포), 문서 |
 | 소유 파일 | `app/main.py`, `app/config.py`, `app/db.py`, `app/models.py`, `app/auth.py`, `app/routers/auth.py` | `app/ai_client.py`, `app/context.py`, `app/routers/chat.py`, `app/logging_conf.py`, `app/errors.py` | `app/templates/*`, `app/static/*`, `app/routers/pages.py`, `app/routers/logs.py`, `scripts/check_logs.sql`, `README.md`, 배포 설정 |
 | 테스트 | `tests/test_auth.py` | `tests/test_chat.py` | `tests/test_logs.py` |

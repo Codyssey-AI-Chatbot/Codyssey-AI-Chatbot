@@ -363,3 +363,332 @@ erDiagram
 - **실패는 저장하지 않음**: AI 호출이 실패하면 `chat_logs` 에 행을 만들지 않습니다. 실패 원인은 서버 로그(`ai_call_fail`)로 추적합니다.
 - **외래키**: SQLite 는 기본적으로 외래키를 검사하지 않으므로 연결마다 `PRAGMA foreign_keys=ON` 을 켭니다 (`app/db.py`).
 - **시각**: 저장은 UTC 로 통일하고, 표시할 때만 KST 로 바꿉니다. SQLite 는 시간대를 저장하지 않으므로 읽을 때 UTC 를 다시 붙입니다 (`app/routers/logs.py` 의 `as_utc`).
+
+---
+
+## 5. 실행 방법 (로컬)
+
+사전 준비: Python 3.10 이상, Git, Codyssey 에서 발급받은 AI API 키.
+
+```bash
+git clone https://github.com/Codyssey-AI-Chatbot/Codyssey-AI-Chatbot.git
+cd Codyssey-AI-Chatbot
+
+python -m venv .venv
+source .venv/bin/activate            # Windows PowerShell: .\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+
+cp .env.example .env                 # Windows PowerShell: Copy-Item .env.example .env
+```
+
+`.env` 를 열어 두 값을 채웁니다. 나머지는 기본값으로 동작합니다.
+
+```bash
+# SECRET_KEY 생성 (출력된 값을 .env 의 SECRET_KEY= 에 붙여 넣기)
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+```dotenv
+SECRET_KEY=<위에서 생성한 값>
+AI_API_KEY=<발급받은 키>
+```
+
+서버 실행:
+
+```bash
+uvicorn app.main:app --reload
+```
+
+- 브라우저에서 `http://127.0.0.1:8000` 을 열면 로그인 페이지로 이동합니다. 회원가입 → 로그인 → 채팅 순서로 사용합니다.
+- 첫 실행 때 저장소 루트에 `app.db` 가 만들어지고 `users`, `chat_logs` 테이블이 생성됩니다.
+- API 문서(Swagger UI): `http://127.0.0.1:8000/docs`
+
+테스트:
+
+```bash
+python -m pytest -q        # 44 passed
+```
+
+테스트는 임시 디렉터리의 별도 SQLite 파일과 가짜 AI 클라이언트를 사용하므로, 내 `.env`, `app.db`, 실제 AI API 에 영향을 주지 않습니다.
+
+---
+
+## 6. 배포 방법 (Render)
+
+배포 흐름: `develop` → `main` 릴리스 PR 머지 → Render 가 `main` 을 빌드·배포. 설정은 저장소의 [`render.yaml`](render.yaml) 한 파일에 있습니다.
+
+### 처음 배포
+
+1. [Render](https://render.com) 에 가입하고 GitHub 계정을 연결합니다. 조직 저장소라면 Render GitHub App 에 `Codyssey-AI-Chatbot` 조직 접근을 허용합니다.
+2. Dashboard → **New** → **Blueprint** → 이 저장소 선택. Render 가 `render.yaml` 을 읽어 웹 서비스 1개를 제안합니다.
+3. `AI_API_KEY` 입력란이 나타나면 발급받은 키를 넣습니다. (`sync: false` 로 선언되어 저장소에는 없고 Render 에만 저장됩니다.) `SECRET_KEY` 는 Render 가 임의 값으로 생성합니다.
+4. **Apply** 를 누르면 빌드(`pip install -r requirements.txt`) → 기동(`uvicorn app.main:app --host 0.0.0.0 --port $PORT`) → 헬스체크(`/health`) 순서로 진행됩니다.
+5. 배포가 끝나면 `https://<서비스이름>.onrender.com/health` 가 `{"status":"ok"}` 를 돌려줍니다. 이 URL 을 이 문서 맨 위 **배포 URL** 에 적습니다.
+
+이후에는 `main` 에 커밋이 추가될 때마다 자동으로 재배포됩니다.
+
+### `render.yaml` 요약
+
+| 항목 | 값 | 비고 |
+|---|---|---|
+| `runtime` / `plan` / `region` | python / free / singapore | 한국에서 가장 가까운 리전 |
+| `branch` | `main` | 배포 브랜치. `develop` 은 배포하지 않음 |
+| `buildCommand` | `pip install -r requirements.txt` | |
+| `startCommand` | `uvicorn app.main:app --host 0.0.0.0 --port $PORT` | `PORT` 는 Render 가 주입 |
+| `healthCheckPath` | `/health` | 실패하면 배포를 롤백 |
+| `PYTHON_VERSION` | `3.10.11` | 로컬 개발·테스트와 동일 |
+| `SECRET_KEY` | `generateValue: true` | Render 가 생성 |
+| `AI_API_KEY` | `sync: false` | Apply 때 직접 입력 |
+| `SESSION_COOKIE_SECURE` | `"true"` | Render 는 HTTPS 이므로 Secure 쿠키 |
+| 그 외 `AI_*`, `DATABASE_URL` | `.env.example` 과 동일 | |
+
+### 주의사항
+
+- **무료 플랜은 15분 동안 요청이 없으면 잠듭니다.** 첫 요청이 30초~1분 걸릴 수 있으니 평가 직전에 한 번 접속해 깨워 두세요.
+- **무료 플랜의 디스크는 재배포 때 초기화됩니다.** SQLite 파일(`app.db`)도 함께 사라지므로 재배포 뒤에는 다시 가입해야 합니다. 데이터를 유지하려면 유료 플랜에서 Persistent Disk 를 붙이고 `DATABASE_URL` 을 `sqlite:////var/data/app.db` 처럼 디스크 경로로 바꿉니다.
+- `SESSION_COOKIE_SECURE=true` 는 HTTPS 전용입니다. HTTP 로만 서비스하는 환경(예: 공인 IP 의 리눅스 서버)에서는 `false` 로 두어야 로그인이 됩니다.
+
+### 대안: 리눅스 서버에서 직접 실행
+
+Render 대신 리눅스 서버(VM, EC2 등)를 쓴다면 5절의 설치 명령을 그대로 수행한 뒤 systemd 서비스로 등록합니다.
+
+```ini
+# /etc/systemd/system/chatbot.service
+[Unit]
+Description=Codyssey AI Chatbot
+After=network.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/Codyssey-AI-Chatbot
+EnvironmentFile=/home/ubuntu/Codyssey-AI-Chatbot/.env
+ExecStart=/home/ubuntu/Codyssey-AI-Chatbot/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now chatbot
+sudo systemctl status chatbot          # 로그: journalctl -u chatbot -f
+```
+
+방화벽/보안 그룹에서 8000 포트를 열고 `http://<공인IP>:8000` 으로 접속합니다. (HTTPS 가 아니므로 `.env` 의 `SESSION_COOKIE_SECURE` 는 `false`)
+
+---
+
+## 7. 환경 변수
+
+모든 설정은 `app/config.py` 의 `Settings` 가 환경 변수 → `.env` 순서로 읽습니다. 값은 `.env.example` 을 복사해 채웁니다. **실제 값은 절대 커밋하지 않습니다.**
+
+| 변수 | 필수 | 기본값 | 설명 |
+|---|---|---|---|
+| `SECRET_KEY` | **예** | 없음 (없으면 시작 실패) | 세션 쿠키 서명 키. `python -c "import secrets; print(secrets.token_urlsafe(32))"` 로 생성 |
+| `AI_API_KEY` | 채팅에 필요 | 없음 | AI API 키. 없으면 인증·화면은 동작하지만 `POST /api/chat` 은 실패 |
+| `AI_BASE_URL` | 아니오 | `https://copa.codyssey.kr/v1` | OpenAI 호환 API 주소 |
+| `AI_MODEL` | 아니오 | `gpt-5.4` | 모델 이름 |
+| `AI_TIMEOUT_SECONDS` | 아니오 | `20` | AI 호출 제한 시간(초). 초과 시 `504 AI_TIMEOUT` |
+| `DATABASE_URL` | 아니오 | `sqlite:///./app.db` | SQLAlchemy DB URL |
+| `SESSION_MAX_AGE_SECONDS` | 아니오 | `86400` (1일) | 세션 쿠키 수명 |
+| `SESSION_COOKIE_SECURE` | 아니오 | `false` | HTTPS 환경에서만 `true`. HTTP 에서 `true` 면 로그인 불가 |
+
+Render 전용: `PYTHON_VERSION`(런타임 버전), `PORT`(Render 가 주입, 시작 명령에서 사용).
+
+---
+
+## 8. 민감정보 관리
+
+- **코드와 문서에 비밀 값이 없습니다.** API 키, 비밀번호, 세션 키는 모두 환경 변수(`.env`)로만 다룹니다. 저장소에는 값이 비어 있는 [`.env.example`](.env.example) 만 있습니다.
+- **`.gitignore`** 가 `.env`, `.env.*`(단 `.env.example` 은 허용), `*.db` 를 제외해 비밀 값과 로컬 DB 가 커밋되지 않습니다.
+- **AI API 키는 서버에만 있습니다.** 브라우저는 `/api/chat` 의 답변 텍스트만 받고, 키나 AI API 주소를 전혀 알 수 없습니다.
+- **비밀번호는 argon2 해시로만 저장**하고, 로그인 실패 시 아이디 존재 여부를 응답 문구나 응답 시간으로 드러내지 않습니다.
+- **세션 쿠키**는 서명되어 위조할 수 없고 `HttpOnly`, `SameSite=Lax`, HTTPS 에서는 `Secure` 로 발급됩니다.
+- **서버 로그에는 질문·답변 전문, API 키, 쿠키를 남기지 않습니다.** `request_id`, `user_id`, 이벤트 이름, 지연 시간, 오류 타입만 기록합니다.
+- PR 템플릿 체크리스트에 "비밀 값이 코드·문서에 없다" 항목을 두어 리뷰 때마다 확인합니다.
+
+---
+
+## 9. 운영: 로그, 예외 처리, 입력 검증
+
+### 서버 로그 이벤트
+
+`POST /api/chat` 요청 하나는 `request_id` 하나로 묶여 다음 이벤트를 남깁니다 (`app.chat` 로거, INFO).
+
+```text
+INFO request_received request_id=3f2a9c1e5b7d4e0f8a6b2c4d9e1f0a7b user_id=1 path=/api/chat
+INFO ai_call_start request_id=3f2a9c1e5b7d4e0f8a6b2c4d9e1f0a7b user_id=1
+INFO ai_call_success request_id=3f2a9c1e5b7d4e0f8a6b2c4d9e1f0a7b user_id=1 latency_ms=1240
+INFO db_save_success request_id=3f2a9c1e5b7d4e0f8a6b2c4d9e1f0a7b user_id=1 chat_id=12
+```
+
+실패했을 때:
+
+```text
+INFO ai_call_fail request_id=... user_id=1 error_type=AITimeoutError      # AI 타임아웃 → 504
+INFO ai_call_fail request_id=... user_id=1 error_type=AIServiceError      # AI 오류 → 502
+INFO db_save_fail request_id=... user_id=1 error_type=OperationalError    # DB 저장 실패 → 500 (롤백)
+```
+
+| 이벤트 | 의미 |
+|---|---|
+| `request_received` | 질문 수신 |
+| `ai_call_start` | AI API 호출 시작 |
+| `ai_call_success` / `ai_call_fail` | AI 응답 수신 (지연 시간) / 실패 (오류 타입) |
+| `db_save_success` / `db_save_fail` | 대화 로그 저장 성공 (`chat_id`) / 실패 |
+
+로그는 로컬에서는 `uvicorn` 콘솔에, Render 에서는 서비스의 **Logs** 탭에 보입니다. uvicorn 의 접근 로그(`"POST /api/chat HTTP/1.1" 200 OK`)도 함께 남습니다.
+
+### 예외 처리
+
+| 상황 | 서버 처리 | 사용자에게 |
+|---|---|---|
+| AI API 가 제한 시간(기본 20초) 안에 응답하지 않음 | `AITimeoutError` 로 변환, `ai_call_fail` 기록, 저장 안 함 | `504 AI_TIMEOUT` → 채팅 화면에 "AI 응답이 지연되고 있습니다. … (error: AI_TIMEOUT)" |
+| AI API 연결 실패, 오류 상태 코드, 빈 응답 | `AIServiceError` 로 변환, `ai_call_fail` 기록 | `502 AI_SERVICE_ERROR` |
+| 답변은 받았지만 DB 저장 실패 | 롤백, `db_save_fail` 기록. 다음 요청은 정상 처리 | `500 DB_SAVE_ERROR` |
+| 비로그인 호출 | `AuthError` → JSON | `401 UNAUTHORIZED`. 화면은 `/login` 으로 이동 |
+| 공급자 내부 오류 메시지, 스택 트레이스 | 응답에 포함하지 않음 | 일관된 `{"error", "message"}` 만 |
+
+어떤 경우에도 서버 프로세스는 종료되지 않고 다음 요청을 받습니다. 채팅 화면은 전송 중 입력을 잠그고 로딩 문구를 보여 주며, 실패하면 오류 말풍선에 에러 코드를 함께 표시합니다.
+
+### 입력 검증
+
+| 대상 | 규칙 | 위반 시 |
+|---|---|---|
+| 아이디 | 영문·숫자·밑줄, 3~30자 | `400 INVALID_USERNAME` |
+| 비밀번호 | 8~128자 | `400 INVALID_PASSWORD` |
+| 채팅 메시지 | 공백만 있는 입력 거부, 2,000자 이하 | `400 INVALID_MESSAGE` (화면에서도 `maxlength=2000` 과 빈 입력 차단) |
+| 로그 조회 `limit` / `offset` | 1~100 / 0 이상 | `422` |
+
+---
+
+## 10. DB 확인 가이드
+
+평가자가 DB 에 쌓인 대화 로그를 확인하는 방법 세 가지입니다. 어느 것이든 하나로 충분합니다.
+
+### 방법 1. 내 로그 조회 API
+
+로그인한 상태에서 `GET /api/me/chats` 를 호출하면 **그 사용자의** 대화가 최신순 JSON 으로 나옵니다. 브라우저에서 로그인한 뒤 주소창에 `/api/me/chats` 를 입력해도 됩니다.
+
+```bash
+curl -c cookies.txt -X POST http://127.0.0.1:8000/api/auth/login \
+  -H "Content-Type: application/json" -d '{"username": "alice", "password": "correct-horse"}'
+curl -b cookies.txt "http://127.0.0.1:8000/api/me/chats?limit=5"
+```
+
+응답 예시는 [3. API 명세](#3-api-명세) 를 참고하세요. 각 항목에 `question`, `answer`, `created_at`(UTC) 이 포함됩니다.
+
+### 방법 2. 내 대화 기록 화면
+
+로그인 후 상단 바의 **내 대화 기록** 또는 `/history` 로 들어가면 최근 50건이 표(시각 KST, 질문, 답변)로 보입니다. 다른 계정으로 로그인하면 그 계정의 기록만 보여 **사용자 기준 분리**를 바로 확인할 수 있습니다.
+
+### 방법 3. 확인용 SQL 스크립트 (운영자, 모든 사용자)
+
+[`scripts/check_logs.sql`](scripts/check_logs.sql) 은 두 개의 질의를 담고 있습니다. (1) 최근 대화 로그 20건을 사용자명과 함께, (2) 사용자별 대화 수와 마지막 대화 시각.
+
+```bash
+# sqlite3 CLI 가 있을 때
+sqlite3 -header -column app.db < scripts/check_logs.sql
+
+# sqlite3 CLI 가 없을 때 (Windows 등) — 파이썬 표준 라이브러리로 같은 SQL 실행
+python scripts/check_logs.py app.db
+```
+
+출력 예시:
+
+```text
+id | username | created_at | question | answer
+------------------------------------------------------------------------
+12 | alice | 2026-10-08 07:14:33.611701 | FastAPI에서 세션 로그인은 어떻게 구현해? | FastAPI 자체에는 세션 기능이 없어서 Starlette 의 SessionMiddleware 를 ...
+11 | alice | 2026-10-08 07:10:02.120445 | 배포 방법을 알려줘 | Render 에 GitHub 저장소를 연결하면 ...
+(2 rows)
+
+user_id | username | chat_count | last_chat_at
+------------------------------------------------------------------------
+1 | alice | 2 | 2026-10-08 07:14:33.611701
+(1 rows)
+```
+
+Render 에 배포된 서비스라면 서비스 페이지의 **Shell** 탭에서 `python scripts/check_logs.py app.db` 를 실행하면 됩니다. DB 파일은 저장소 루트의 `app.db` (`DATABASE_URL` 기본값) 입니다.
+
+---
+
+## 11. 팀 구성원 역할 및 개인별 작업 요약
+
+세 명이 파일 소유를 겹치지 않게 나누어 머지 충돌 없이 병렬로 작업했습니다. 아래 요약은 `git log` 와 PR 목록을 기준으로 작성했습니다. (역할 분담의 원본과 커밋 계획은 [`docs/team-roles.md`](docs/team-roles.md))
+
+| 역할 | GitHub | 담당 요구사항 | 소유 파일 |
+|---|---|---|---|
+| **A** 인증·DB 기반 | [@junhnno](https://github.com/junhnno) | 2 (인증/접근 제어), 4의 저장 모델 | `app/main.py`, `config.py`, `db.py`, `models.py`, `auth.py`, `routers/auth.py`, `tests/conftest.py`, `tests/test_auth.py` |
+| **B** AI 챗봇 파이프라인 | [@Wattamelon](https://github.com/Wattamelon) | 3 (AI 호출·컨텍스트), 5 (로그·예외·검증) | `app/ai_client.py`, `context.py`, `routers/chat.py`, `logging_conf.py`, `errors.py`, `tests/test_chat.py` |
+| **C** UI·로그 조회·배포·문서 | [@ADOHI](https://github.com/ADOHI) | 1 (웹 UI), 4의 조회, 6 (배포), 문서 | `app/templates/*`, `app/static/*`, `routers/pages.py`, `routers/logs.py`, `scripts/*`, `render.yaml`, `README.md`, `tests/test_pages.py`, `tests/test_logs.py` |
+
+### A — @junhnno (인증·DB 기반) · 13 커밋 · PR 3개
+
+- **PR #4 `feature/project-setup`** (7 커밋): `.gitignore`/`.env.example`, 버전 고정 `requirements.txt`, 환경 변수 로딩(`config.py`), SQLite 연결·세션·Base(`db.py`), `User`/`ChatLog` 모델, FastAPI 앱과 라우터 등록·`/health`, PR 템플릿과 팀 역할 문서.
+- **PR #5 `feature/auth-signup-login`** (4 커밋): 세션 비밀키 설정, argon2 비밀번호 해싱과 `get_current_user`/`get_current_user_or_redirect` 의존성, 회원가입·로그인·로그아웃·내 정보 API 와 입력 검증, 세션 미들웨어와 `AuthError` 핸들러. (계획상 PR3 "접근 제어" 는 이 PR 에 함께 포함)
+- **PR #6 `feature/auth-tests`** (2 커밋): pytest 설정과 공용 `client` 픽스처(임시 DB), 인증 API 테스트 14개.
+
+### B — @Wattamelon (AI 챗봇 파이프라인) · 14 커밋 · PR 4개
+
+- **PR #8 `feature/ai-client`** (4 커밋): 공급자 독립 `AIClient` 인터페이스, `AI_*` 환경 설정, OpenAI 호환 비동기 클라이언트, 타임아웃과 `AITimeoutError`/`AIServiceError` 변환.
+- **PR #10 `feature/chat-api`** (4 커밋): 인증된 `POST /api/chat`, 빈 입력·2,000자 검증, 성공한 대화만 DB 저장, 테스트.
+- **PR #12 `feature/context-strategy`** (3 커밋): 사용자별 최근 5개 대화 조회, 컨텍스트를 AI 요청에 연결, 컨텍스트 격리·순서 테스트.
+- **PR #14 `feature/logging-errors`** (3 커밋): `request_id` 기반 이벤트 로그(`request_received`, `ai_call_*`, `db_save_*`, `latency_ms`), 타임아웃 504·AI 실패 502·DB 실패 500 응답과 롤백, 민감정보 비노출 테스트.
+
+### C — @ADOHI (UI·로그 조회·배포·문서) · 14 커밋 · PR 5개
+
+- **PR #21 `feature/base-ui`** (4 커밋): 공통 레이아웃 템플릿과 CSS, 회원가입 페이지, 로그인 페이지(`auth.js` 로 API 호출과 오류 표시), 페이지 라우트 테스트.
+- **PR #22 `feature/chat-ui`** (3 커밋): 로그인 보호된 `/chat` 페이지 마크업, `chat.js`(fetch 로 질문 전송·말풍선 표시), 로딩 표시·입력 잠금·에러 코드 말풍선·세션 만료 처리.
+- **PR #23 `feature/log-view`** (4 커밋): `GET /api/me/chats` 내 로그 조회 API, `/history` 내 대화 기록 화면과 채팅 화면의 최근 대화 복원, `scripts/check_logs.sql`·`check_logs.py`, 로그 조회 테스트 8개.
+- **PR #24 `feature/deploy`** (1 커밋): Render Blueprint `render.yaml` (헬스체크, 비밀 값은 대시보드 입력).
+- **PR `docs/readme`** (2 커밋): 이 README 전체, `docs/team-roles.md` 담당자 갱신.
+
+---
+
+## 12. 협업 규칙
+
+### 브랜치 전략
+
+```text
+main      ← 배포용. develop 에서 올리는 릴리스 PR 로만 머지 (Render 가 이 브랜치를 배포)
+develop   ← 통합 브랜치. 모든 기능 PR 의 대상
+feature/<영역>-<내용>  ← 기능 단위 작업 브랜치 (예: feature/chat-api, feature/log-view)
+docs/<내용>            ← 문서 작업 브랜치
+```
+
+### PR 규칙
+
+- 모든 변경은 PR 로만 `develop` 에 들어갑니다. 직접 push 하지 않습니다.
+- PR 은 [템플릿](.github/pull_request_template.md)에 따라 작업 요약, 관련 요구사항, 변경 사항, 테스트 방법, 체크리스트를 적고, 해당 이슈를 `Closes #n` 으로 연결합니다.
+- 본인이 아닌 팀원 1명이 리뷰·승인한 뒤 머지합니다. **squash 를 쓰지 않고 머지 커밋**을 남겨 개별 커밋 이력이 보존되게 합니다.
+- 각자 소유 파일만 수정합니다. 다른 사람 파일을 고쳐야 하면 PR 에 이유를 적거나 이슈로 요청합니다. (예: C 가 발견한 B 영역 문제는 이슈 #20 으로 전달)
+
+### 커밋 규칙
+
+- 접두어: `feat:`, `fix:`, `docs:`, `test:`, `chore:`
+- 한 커밋은 한 가지 의미 있는 변경만 담습니다. (팀원별 10회 이상 유의미한 커밋)
+- 커밋과 PR 은 각자 본인 GitHub 계정으로 올립니다.
+
+### 이슈
+
+기능 단위로 이슈를 만들고(배경, 작업 목록, 완료 조건, 관련 요구사항) PR 머지 시 자동으로 닫히게 연결했습니다. 이슈 목록: https://github.com/Codyssey-AI-Chatbot/Codyssey-AI-Chatbot/issues?q=is%3Aissue
+
+---
+
+## 13. 테스트
+
+```bash
+python -m pytest -q        # 44 passed
+```
+
+| 파일 | 개수 | 확인하는 것 | 작성 |
+|---|---|---|---|
+| `tests/test_auth.py` | 14 | 가입(해시 저장, 중복, 아이디/비밀번호 검증), 로그인(실패 시 정보 비노출), 로그아웃, 삭제된 사용자 세션 거부, 화면용 의존성의 리다이렉트 | A |
+| `tests/test_chat.py` | 15 | 로그인 필요, 빈 입력·2,000자 검증, 저장, AI 실패 시 미저장, 최근 5개 컨텍스트와 사용자 격리, 타임아웃 504·실패 502·DB 실패 500, 로그 이벤트와 `request_id`, 민감정보 비노출 | B |
+| `tests/test_pages.py` | 7 | `/` 리다이렉트, 가입·로그인 페이지 렌더링, 정적 파일, `/chat` 접근 제어 | C |
+| `tests/test_logs.py` | 8 | `/api/me/chats` 로그인 필요·본인 로그만·정렬·limit/offset·범위 검증, `/history` 접근 제어·KST 표시·빈 상태, `check_logs.sql` 실행 결과 | C |
+
+- `tests/conftest.py` 가 앱 import 전에 `SECRET_KEY` 와 임시 `DATABASE_URL` 을 환경 변수로 지정해 개발자의 `.env` 와 `app.db` 를 건드리지 않습니다.
+- AI 호출은 FastAPI `dependency_overrides` 로 가짜 클라이언트(`FakeAIClient`)를 주입해 실제 네트워크 요청 없이 성공·타임아웃·실패를 재현합니다.
