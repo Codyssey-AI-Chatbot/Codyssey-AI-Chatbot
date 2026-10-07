@@ -12,6 +12,7 @@
     <nav class="nav">
       {% if user %}
         <a href="/chat">채팅</a>
+        <a href="/history">내 대화 기록</a>
         <span class="nav-user">{{ user.username }}</span>
         <button type="button" id="logout-button" class="button-link">로그아웃</button>
       {% else %}
