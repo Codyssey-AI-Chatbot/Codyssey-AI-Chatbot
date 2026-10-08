@@ -444,8 +444,8 @@ python -m pytest -q        # 44 passed
 
 ### 주의사항
 
-- **무료 플랜은 15분 동안 요청이 없으면 잠듭니다.** 첫 요청이 30초~1분 걸릴 수 있으니 평가 직전에 한 번 접속해 깨워 두세요.
-- **무료 플랜의 디스크는 재배포 때 초기화됩니다.** SQLite 파일(`app.db`)도 함께 사라지므로 재배포 뒤에는 다시 가입해야 합니다. 데이터를 유지하려면 유료 플랜에서 Persistent Disk 를 붙이고 `DATABASE_URL` 을 `sqlite:////var/data/app.db` 처럼 디스크 경로로 바꿉니다.
+- **무료 플랜은 15분 동안 요청이 없으면 잠듭니다.** 다음 첫 요청은 깨어나는 데 약 1분이 걸리므로 평가 직전에 한 번 접속해 깨워 두세요.
+- **무료 플랜은 잠들거나 재시작·재배포될 때마다 디스크가 초기화됩니다.** SQLite 파일(`app.db`)도 함께 사라져 가입 정보와 대화 기록이 남지 않습니다. 그래서 배포 환경에서는 "가입 → 채팅 → 기록 조회"를 끊지 않고 이어서 확인하고, 누적 저장과 SQL 확인은 로컬 실행에서 함께 확인합니다. 무료 플랜에는 Persistent Disk 를 붙일 수 없으므로, 데이터를 유지하려면 유료 플랜의 디스크(`DATABASE_URL=sqlite:////var/data/app.db`)나 PostgreSQL 로 바꿉니다.
 - `SESSION_COOKIE_SECURE=true` 는 HTTPS 전용입니다. HTTP 로만 서비스하는 환경(예: 공인 IP 의 리눅스 서버)에서는 `false` 로 두어야 로그인이 됩니다.
 
 ### 대안: 리눅스 서버에서 직접 실행
@@ -610,7 +610,7 @@ user_id | username | chat_count | last_chat_at
 (1 rows)
 ```
 
-Render 에 배포된 서비스라면 서비스 페이지의 **Shell** 탭에서 `python scripts/check_logs.py app.db` 를 실행하면 됩니다. DB 파일은 저장소 루트의 `app.db` (`DATABASE_URL` 기본값) 입니다.
+Render 무료 플랜은 Shell 접속을 지원하지 않으므로, 배포된 서비스에서는 방법 1(API)과 방법 2(화면)로 확인하고 이 스크립트는 로컬 실행이나 Shell 을 쓸 수 있는 서버에서 사용합니다. DB 파일은 저장소 루트의 `app.db` (`DATABASE_URL` 기본값) 입니다.
 
 ---
 
@@ -637,13 +637,13 @@ Render 에 배포된 서비스라면 서비스 페이지의 **Shell** 탭에서 
 - **PR #12 `feature/context-strategy`** (3 커밋): 사용자별 최근 5개 대화 조회, 컨텍스트를 AI 요청에 연결, 컨텍스트 격리·순서 테스트.
 - **PR #14 `feature/logging-errors`** (3 커밋): `request_id` 기반 이벤트 로그(`request_received`, `ai_call_*`, `db_save_*`, `latency_ms`), 타임아웃 504·AI 실패 502·DB 실패 500 응답과 롤백, 민감정보 비노출 테스트.
 
-### C — @ADOHI (UI·로그 조회·배포·문서) · 14 커밋 · PR 5개
+### C — @ADOHI (UI·로그 조회·배포·문서) · 17 커밋 · PR 5개
 
 - **PR #21 `feature/base-ui`** (4 커밋): 공통 레이아웃 템플릿과 CSS, 회원가입 페이지, 로그인 페이지(`auth.js` 로 API 호출과 오류 표시), 페이지 라우트 테스트.
 - **PR #22 `feature/chat-ui`** (3 커밋): 로그인 보호된 `/chat` 페이지 마크업, `chat.js`(fetch 로 질문 전송·말풍선 표시), 로딩 표시·입력 잠금·에러 코드 말풍선·세션 만료 처리.
 - **PR #23 `feature/log-view`** (4 커밋): `GET /api/me/chats` 내 로그 조회 API, `/history` 내 대화 기록 화면과 채팅 화면의 최근 대화 복원, `scripts/check_logs.sql`·`check_logs.py`, 로그 조회 테스트 8개.
-- **PR #24 `feature/deploy`** (1 커밋): Render Blueprint `render.yaml` (헬스체크, 비밀 값은 대시보드 입력).
-- **PR #25 `docs/readme`** (3 커밋): 이 README 전체, `docs/team-roles.md` 담당자 갱신.
+- **PR #24 `feature/deploy`** (2 커밋): Render Blueprint `render.yaml` (헬스체크, 비밀 값은 대시보드 입력), 무료 플랜 제약 주석 정정.
+- **PR #25 `docs/readme`** (4 커밋): 이 README 전체, `docs/team-roles.md` 담당자 갱신, 무료 플랜 제약 정정.
 
 ---
 
