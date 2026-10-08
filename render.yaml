@@ -5,8 +5,8 @@
 #   2) sync: false 로 표시된 AI_API_KEY 는 Apply 단계에서 직접 입력한다. (저장소에 두지 않는다)
 #   3) SECRET_KEY 는 Render 가 임의 값으로 생성한다.
 #
-# 주의: 무료 플랜은 디스크가 재배포마다 초기화되므로 SQLite(app.db) 데이터도 함께 사라진다.
-#       데이터를 유지하려면 유료 플랜의 Persistent Disk 를 붙이고 DATABASE_URL 을 그 경로로 바꾼다.
+# 주의: 무료 플랜은 15분 미사용으로 잠들거나 재시작·재배포될 때마다 디스크가 초기화되어 SQLite(app.db) 데이터가 사라진다.
+#       무료 플랜에는 Persistent Disk 를 붙일 수 없다. 데이터를 유지하려면 유료 플랜의 디스크나 PostgreSQL 로 DATABASE_URL 을 바꾼다.
 services:
   - type: web
     name: codyssey-ai-chatbot
