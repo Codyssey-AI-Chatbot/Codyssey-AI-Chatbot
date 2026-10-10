@@ -2,7 +2,7 @@
 
 로그인한 사용자가 웹 화면에서 질문을 입력하면 서버가 AI API 를 호출해 답변을 돌려주고, 모든 대화를 DB 에 누적 저장해 사용자별로 조회할 수 있는 **웹 기반 AI 챗봇 서비스**입니다. Codyssey AI/SW 기초 과정 텀 프로젝트(3인 팀)로 FastAPI + SQLite 로 구현했습니다.
 
-- **배포 URL**: _(Render 배포 후 여기에 적습니다. 예: `https://codyssey-ai-chatbot.onrender.com`)_
+- **배포 URL**: https://codyssey-ai-chatbot.onrender.com (Render 무료 플랜이라 15분 미사용 시 잠들며, 깨어나는 첫 접속은 약 1분 걸립니다. 상태 확인은 [`/health`](https://codyssey-ai-chatbot.onrender.com/health))
 - **저장소**: https://github.com/Codyssey-AI-Chatbot/Codyssey-AI-Chatbot
 - **기술 스택**: Python 3.10, FastAPI, SQLAlchemy 2, SQLite, Jinja2, OpenAI Python SDK(OpenAI 호환 API), pytest
 
@@ -43,7 +43,7 @@
 2. **질문과 답변**: 채팅 화면에서 질문을 보내면 서버가 AI API 를 호출하고, 답변이 같은 화면에 말풍선으로 추가된다. 서버는 질문·답변을 `chat_logs` 에 저장한다.
 3. **문맥 유지**: 서버는 같은 사용자의 **최근 5개 대화**를 함께 AI 에 전달한다. "내가 방금 뭘 물어봤지?" 같은 질문에 이어서 답할 수 있다.
 4. **실패 안내**: AI 가 20초 안에 답하지 않거나 오류를 내면 서비스는 죽지 않고 `AI_TIMEOUT` / `AI_SERVICE_ERROR` 안내를 화면에 보여 준다. 실패한 대화는 저장하지 않는다.
-5. **기록 조회와 확인**: 사용자는 `/history` 화면과 `GET /api/me/chats` 로 자신의 로그만 본다. 운영자는 `scripts/check_logs.sql` 로 DB 를 직접 확인한다.
+5. **기록 조회와 확인**: 사용자는 `/history` 화면과 `GET /api/me/chats` 로 자신의 로그만 본다. 운영자는 비밀번호로 보호된 관리자 페이지 `/admin` 이나 `scripts/check_logs.sql` 로 모든 사용자의 로그를 확인한다.
 
 ### 과제 요구사항 대응표
 
@@ -52,7 +52,7 @@
 | 1 | 웹 UI (질문 입력, 같은 화면에서 응답 확인) | `/chat` 페이지 + `chat.js` (fetch 로 호출, 말풍선 추가) | C |
 | 2 | 사용자 인증 및 접근 제어 | 회원가입/로그인/로그아웃 API, 세션 쿠키, `get_current_user`(401) / `get_current_user_or_redirect`(303) | A |
 | 3 | AI 챗봇 처리 (서버에서 AI 호출, 컨텍스트 전략) | `ai_client.py`(OpenAI 호환 API, 타임아웃), `context.py`(최근 5개) | B |
-| 4 | 대화 로그 저장 및 조회/추적 | `ChatLog(user_id, question, answer, created_at)` 저장(B), `GET /api/me/chats`·`/history`·SQL(C) | A·B·C |
+| 4 | 대화 로그 저장 및 조회/추적 | `ChatLog(user_id, question, answer, created_at)` 저장(B), `GET /api/me/chats`·`/history`·관리자 페이지 `/admin`·SQL(C) | A·B·C |
 | 5 | 운영 및 유지보수 (로그/예외/입력 검증) | `request_received` → `ai_call_*` → `db_save_*` 로그, 에러 코드 응답, 빈 입력·2,000자 제한 | B |
 | 6 | 배포 및 접근성 | Render Blueprint(`render.yaml`), 이 문서의 배포/환경 변수 절 | C |
 | 7 | 협업 및 형상관리 | `main`/`develop`/`feature/*`, PR 템플릿, 이슈 연결, 팀원별 10회 이상 커밋 | 전원 |
@@ -66,7 +66,7 @@
 ```mermaid
 flowchart LR
     subgraph Browser["브라우저"]
-        UI["HTML(Jinja2) + CSS + vanilla JS<br/>/signup /login /chat /history"]
+        UI["HTML(Jinja2) + CSS + vanilla JS<br/>/signup /login /chat /history /admin"]
     end
 
     subgraph Server["FastAPI (uvicorn)"]
@@ -141,12 +141,12 @@ sequenceDiagram
 | `app/routers/chat.py` | `POST /api/chat`: 검증 → 컨텍스트 → AI 호출 → 저장, 단계별 로그와 에러 코드 응답 | B |
 | `app/logging_conf.py` | 민감정보를 제외한 `key=value` 이벤트 로그 (`app.chat` 로거) | B |
 | `app/errors.py` | `AITimeoutError`, `AIServiceError` | B |
-| `app/routers/pages.py` | `/`, `/signup`, `/login`, `/chat`, `/history` 템플릿 렌더링 | C |
-| `app/routers/logs.py` | `GET /api/me/chats` 내 로그 조회 | C |
+| `app/routers/pages.py` | `/`, `/signup`, `/login`, `/chat`, `/history`, `/admin` 템플릿 렌더링, 관리자 인증 | C |
+| `app/routers/logs.py` | `GET /api/me/chats` 내 로그 조회, 관리자 화면용 전체 조회 함수 | C |
 | `app/templates/`, `app/static/` | Jinja2 템플릿, CSS, `auth.js`(폼 전송), `chat.js`(채팅) | C |
 | `scripts/check_logs.sql`, `scripts/check_logs.py` | DB 확인용 SQL 과 실행기 | C |
 | `render.yaml` | Render 배포 설정 | C |
-| `tests/` | `conftest.py`(A), `test_auth.py`(A), `test_chat.py`(B), `test_pages.py`·`test_logs.py`(C) | 전원 |
+| `tests/` | `conftest.py`(A), `test_auth.py`(A), `test_chat.py`(B), `test_pages.py`·`test_logs.py`·`test_admin.py`(C) | 전원 |
 
 ### 디렉터리 구조
 
@@ -167,7 +167,7 @@ sequenceDiagram
 │   │   ├── chat.py        # /api/chat
 │   │   ├── logs.py        # /api/me/chats
 │   │   └── pages.py       # 화면
-│   ├── templates/         # base, signup, login, chat, history
+│   ├── templates/         # base, signup, login, chat, history, admin
 │   └── static/            # style.css, auth.js, chat.js
 ├── scripts/
 │   ├── check_logs.sql     # DB 확인용 SQL
@@ -200,6 +200,7 @@ sequenceDiagram
 | 화면 | `GET /` | - | `/chat` 으로 리다이렉트 |
 | 화면 | `GET /signup`, `GET /login` | 불필요 | 가입·로그인 페이지 |
 | 화면 | `GET /chat`, `GET /history` | 필요 | 채팅, 내 대화 기록 (비로그인 시 `303 → /login`) |
+| 화면 | `GET /admin` | 관리자 비밀번호 | 관리자 조회: 사용자 목록과 모든 사용자의 대화 로그. HTTP Basic 인증, `ADMIN_PASSWORD` 미설정 시 `404` |
 | 운영 | `GET /health` | 불필요 | `{"status": "ok"}` |
 
 ### 오류 응답 형식
@@ -406,7 +407,7 @@ uvicorn app.main:app --reload
 테스트:
 
 ```bash
-python -m pytest -q        # 44 passed
+python -m pytest -q        # 53 passed
 ```
 
 테스트는 임시 디렉터리의 별도 SQLite 파일과 가짜 AI 클라이언트를 사용하므로, 내 `.env`, `app.db`, 실제 AI API 에 영향을 주지 않습니다.
@@ -421,7 +422,7 @@ python -m pytest -q        # 44 passed
 
 1. [Render](https://render.com) 에 가입하고 GitHub 계정을 연결합니다. 조직 저장소라면 Render GitHub App 에 `Codyssey-AI-Chatbot` 조직 접근을 허용합니다.
 2. Dashboard → **New** → **Blueprint** → 이 저장소 선택. Render 가 `render.yaml` 을 읽어 웹 서비스 1개를 제안합니다.
-3. `AI_API_KEY` 입력란이 나타나면 발급받은 키를 넣습니다. (`sync: false` 로 선언되어 저장소에는 없고 Render 에만 저장됩니다.) `SECRET_KEY` 는 Render 가 임의 값으로 생성합니다.
+3. `AI_API_KEY` 입력란이 나타나면 발급받은 키를 넣습니다. (`sync: false` 로 선언되어 저장소에는 없고 Render 에만 저장됩니다.) `SECRET_KEY` 와 `ADMIN_PASSWORD`(관리자 페이지 비밀번호)는 Render 가 임의 값으로 생성합니다.
 4. **Apply** 를 누르면 빌드(`pip install -r requirements.txt`) → 기동(`uvicorn app.main:app --host 0.0.0.0 --port $PORT`) → 헬스체크(`/health`) 순서로 진행됩니다.
 5. 배포가 끝나면 `https://<서비스이름>.onrender.com/health` 가 `{"status":"ok"}` 를 돌려줍니다. 이 URL 을 이 문서 맨 위 **배포 URL** 에 적습니다.
 
@@ -434,10 +435,11 @@ python -m pytest -q        # 44 passed
 | `runtime` / `plan` / `region` | python / free / singapore | 한국에서 가장 가까운 리전 |
 | `branch` | `main` | 배포 브랜치. `develop` 은 배포하지 않음 |
 | `buildCommand` | `pip install -r requirements.txt` | |
-| `startCommand` | `uvicorn app.main:app --host 0.0.0.0 --port $PORT` | `PORT` 는 Render 가 주입 |
+| `startCommand` | `uvicorn app.main:app --host 0.0.0.0 --port $PORT --loop asyncio` | `PORT` 는 Render 가 주입. `--loop asyncio` 는 아래 주의사항 참고 |
 | `healthCheckPath` | `/health` | 실패하면 배포를 롤백 |
 | `PYTHON_VERSION` | `3.10.11` | 로컬 개발·테스트와 동일 |
 | `SECRET_KEY` | `generateValue: true` | Render 가 생성 |
+| `ADMIN_PASSWORD` | `generateValue: true` | Render 가 생성. 대시보드 Environment 탭에서 확인 |
 | `AI_API_KEY` | `sync: false` | Apply 때 직접 입력 |
 | `SESSION_COOKIE_SECURE` | `"true"` | Render 는 HTTPS 이므로 Secure 쿠키 |
 | 그 외 `AI_*`, `DATABASE_URL` | `.env.example` 과 동일 | |
@@ -446,6 +448,7 @@ python -m pytest -q        # 44 passed
 
 - **무료 플랜은 15분 동안 요청이 없으면 잠듭니다.** 다음 첫 요청은 깨어나는 데 약 1분이 걸리므로 평가 직전에 한 번 접속해 깨워 두세요.
 - **무료 플랜은 잠들거나 재시작·재배포될 때마다 디스크가 초기화됩니다.** SQLite 파일(`app.db`)도 함께 사라져 가입 정보와 대화 기록이 남지 않습니다. 그래서 배포 환경에서는 "가입 → 채팅 → 기록 조회"를 끊지 않고 이어서 확인하고, 누적 저장과 SQL 확인은 로컬 실행에서 함께 확인합니다. 무료 플랜에는 Persistent Disk 를 붙일 수 없으므로, 데이터를 유지하려면 유료 플랜의 디스크(`DATABASE_URL=sqlite:////var/data/app.db`)나 PostgreSQL 로 바꿉니다.
+- **첫 배포는 "Timed out after waiting for internal health check" 로 한 번 취소되었습니다.** 빌드와 앱 기동은 성공했지만 상태 확인(`/health`)이 15분간 통과하지 못했고, 원인은 확인하지 못했습니다. 이후 배포는 정상이며, 리눅스에서만 쓰이는 uvloop 변수를 없애려고 시작 명령에 `--loop asyncio` 를 넣어 두었습니다. 같은 일이 생기면 Render 의 Manual Deploy 로 다시 배포합니다.
 - `SESSION_COOKIE_SECURE=true` 는 HTTPS 전용입니다. HTTP 로만 서비스하는 환경(예: 공인 IP 의 리눅스 서버)에서는 `false` 로 두어야 로그인이 됩니다.
 
 ### 대안: 리눅스 서버에서 직접 실행
@@ -493,6 +496,7 @@ sudo systemctl status chatbot          # 로그: journalctl -u chatbot -f
 | `DATABASE_URL` | 아니오 | `sqlite:///./app.db` | SQLAlchemy DB URL |
 | `SESSION_MAX_AGE_SECONDS` | 아니오 | `86400` (1일) | 세션 쿠키 수명 |
 | `SESSION_COOKIE_SECURE` | 아니오 | `false` | HTTPS 환경에서만 `true`. HTTP 에서 `true` 면 로그인 불가 |
+| `ADMIN_PASSWORD` | 아니오 | 없음 | 관리자 페이지 `/admin` 의 비밀번호(사용자명은 `admin`). 비어 있으면 관리자 페이지가 꺼집니다(`404`) |
 
 Render 전용: `PYTHON_VERSION`(런타임 버전), `PORT`(Render 가 주입, 시작 명령에서 사용).
 
@@ -504,6 +508,7 @@ Render 전용: `PYTHON_VERSION`(런타임 버전), `PORT`(Render 가 주입, 시
 - **`.gitignore`** 가 `.env`, `.env.*`(단 `.env.example` 은 허용), `*.db` 를 제외해 비밀 값과 로컬 DB 가 커밋되지 않습니다.
 - **AI API 키는 서버에만 있습니다.** 브라우저는 `/api/chat` 의 답변 텍스트만 받고, 키나 AI API 주소를 전혀 알 수 없습니다.
 - **비밀번호는 argon2 해시로만 저장**하고, 로그인 실패 시 아이디 존재 여부를 응답 문구나 응답 시간으로 드러내지 않습니다.
+- **관리자 페이지**는 모든 사용자의 대화를 보여 주므로 `ADMIN_PASSWORD` 로 보호합니다. 값은 저장소에 없고(Render 가 생성), 화면에는 비밀번호 해시 원문 대신 방식 이름만 표시합니다.
 - **세션 쿠키**는 서명되어 위조할 수 없고 `HttpOnly`, `SameSite=Lax`, HTTPS 에서는 `Secure` 로 발급됩니다.
 - **서버 로그에는 질문·답변 전문, API 키, 쿠키를 남기지 않습니다.** `request_id`, `user_id`, 이벤트 이름, 지연 시간, 오류 타입만 기록합니다.
 - PR 템플릿 체크리스트에 "비밀 값이 코드·문서에 없다" 항목을 두어 리뷰 때마다 확인합니다.
@@ -565,7 +570,7 @@ INFO db_save_fail request_id=... user_id=1 error_type=OperationalError    # DB �
 
 ## 10. DB 확인 가이드
 
-평가자가 DB 에 쌓인 대화 로그를 확인하는 방법 세 가지입니다. 어느 것이든 하나로 충분합니다.
+평가자가 DB 에 쌓인 대화 로그를 확인하는 방법 네 가지입니다. 어느 것이든 하나로 충분합니다.
 
 ### 방법 1. 내 로그 조회 API
 
@@ -610,7 +615,16 @@ user_id | username | chat_count | last_chat_at
 (1 rows)
 ```
 
-Render 무료 플랜은 Shell 접속을 지원하지 않으므로, 배포된 서비스에서는 방법 1(API)과 방법 2(화면)로 확인하고 이 스크립트는 로컬 실행이나 Shell 을 쓸 수 있는 서버에서 사용합니다. DB 파일은 저장소 루트의 `app.db` (`DATABASE_URL` 기본값) 입니다.
+Render 무료 플랜은 Shell 접속을 지원하지 않으므로, 배포된 서비스에서는 방법 1(API), 방법 2(화면), 방법 4(관리자 페이지)로 확인하고 이 스크립트는 로컬 실행이나 Shell 을 쓸 수 있는 서버에서 사용합니다. DB 파일은 저장소 루트의 `app.db` (`DATABASE_URL` 기본값) 입니다.
+
+### 방법 4. 관리자 페이지 (운영자, 모든 사용자)
+
+`/admin` 은 DB 의 `users`, `chat_logs` 테이블을 한 화면에 보여 줍니다. 사용자 목록(가입 시각, 대화 수, 비밀번호 저장 방식)과 모든 사용자의 최근 대화 로그 100건이 나오고, "이 사용자만 보기"로 한 사용자의 로그만 추릴 수 있습니다. Shell 을 쓸 수 없는 배포 환경에서 전체 로그를 확인하는 방법입니다.
+
+- **접속**: 브라우저에서 `/admin` 을 열면 인증 창이 뜹니다. 사용자명은 `admin`, 비밀번호는 환경 변수 `ADMIN_PASSWORD` 의 값입니다.
+- **비밀번호 확인**: Render 에서는 Render 가 값을 생성하므로 대시보드의 **Environment** 탭에서 확인합니다. 로컬에서는 `.env` 에 직접 정합니다.
+- **꺼 두기**: `ADMIN_PASSWORD` 가 비어 있으면 `/admin` 은 `404` 를 반환합니다. 일반 사용자 로그인으로는 열리지 않습니다.
+- **주의**: 모든 사용자의 대화가 보이므로 비밀번호는 평가자에게만 따로 전달하고 문서나 저장소에 적지 않습니다. 비밀번호 해시 원문은 화면에 나오지 않습니다.
 
 ---
 
@@ -622,7 +636,7 @@ Render 무료 플랜은 Shell 접속을 지원하지 않으므로, 배포된 서
 |---|---|---|---|
 | **A** 인증·DB 기반 | [@junhnno](https://github.com/junhnno) | 2 (인증/접근 제어), 4의 저장 모델 | `app/main.py`, `config.py`, `db.py`, `models.py`, `auth.py`, `routers/auth.py`, `tests/conftest.py`, `tests/test_auth.py` |
 | **B** AI 챗봇 파이프라인 | [@Wattamelon](https://github.com/Wattamelon) | 3 (AI 호출·컨텍스트), 5 (로그·예외·검증) | `app/ai_client.py`, `context.py`, `routers/chat.py`, `logging_conf.py`, `errors.py`, `tests/test_chat.py` |
-| **C** UI·로그 조회·배포·문서 | [@ADOHI](https://github.com/ADOHI) | 1 (웹 UI), 4의 조회, 6 (배포), 문서 | `app/templates/*`, `app/static/*`, `routers/pages.py`, `routers/logs.py`, `scripts/*`, `render.yaml`, `README.md`, `tests/test_pages.py`, `tests/test_logs.py` |
+| **C** UI·로그 조회·배포·문서 | [@ADOHI](https://github.com/ADOHI) | 1 (웹 UI), 4의 조회, 6 (배포), 문서 | `app/templates/*`, `app/static/*`, `routers/pages.py`, `routers/logs.py`, `scripts/*`, `render.yaml`, `README.md`, `tests/test_pages.py`, `tests/test_logs.py`, `tests/test_admin.py` |
 
 ### A — @junhnno (인증·DB 기반) · 13 커밋 · PR 3개
 
@@ -637,13 +651,19 @@ Render 무료 플랜은 Shell 접속을 지원하지 않으므로, 배포된 서
 - **PR #12 `feature/context-strategy`** (3 커밋): 사용자별 최근 5개 대화 조회, 컨텍스트를 AI 요청에 연결, 컨텍스트 격리·순서 테스트.
 - **PR #14 `feature/logging-errors`** (3 커밋): `request_id` 기반 이벤트 로그(`request_received`, `ai_call_*`, `db_save_*`, `latency_ms`), 타임아웃 504·AI 실패 502·DB 실패 500 응답과 롤백, 민감정보 비노출 테스트.
 
-### C — @ADOHI (UI·로그 조회·배포·문서) · 17 커밋 · PR 5개
+### C — @ADOHI (UI·로그 조회·배포·문서) · 26 커밋 · 기능 PR 8개, 릴리스 PR
 
 - **PR #21 `feature/base-ui`** (4 커밋): 공통 레이아웃 템플릿과 CSS, 회원가입 페이지, 로그인 페이지(`auth.js` 로 API 호출과 오류 표시), 페이지 라우트 테스트.
 - **PR #22 `feature/chat-ui`** (3 커밋): 로그인 보호된 `/chat` 페이지 마크업, `chat.js`(fetch 로 질문 전송·말풍선 표시), 로딩 표시·입력 잠금·에러 코드 말풍선·세션 만료 처리.
 - **PR #23 `feature/log-view`** (4 커밋): `GET /api/me/chats` 내 로그 조회 API, `/history` 내 대화 기록 화면과 채팅 화면의 최근 대화 복원, `scripts/check_logs.sql`·`check_logs.py`, 로그 조회 테스트 8개.
 - **PR #24 `feature/deploy`** (2 커밋): Render Blueprint `render.yaml` (헬스체크, 비밀 값은 대시보드 입력), 무료 플랜 제약 주석 정정.
 - **PR #25 `docs/readme`** (4 커밋): 이 README 전체, `docs/team-roles.md` 담당자 갱신, 무료 플랜 제약 정정.
+- **PR #28 `fix/render-health-timeout`** (1 커밋): 첫 배포의 상태 확인 타임아웃에 대응해 시작 명령에 `--loop asyncio` 추가.
+- **PR #30 `docs/deploy-url`** (1 커밋): 외부 접속을 확인하고 README 에 배포 URL 기입.
+- **PR #32 `feature/admin-log-view`** (7 커밋): 관리자 조회 페이지 `/admin`(HTTP Basic 인증), 전체 로그·사용자별 대화 수 조회 함수, `ADMIN_PASSWORD` 설정, 테스트 9개, README 반영.
+- **릴리스 PR** (`develop` → `main`, 커밋 없이 머지 커밋만): #27 첫 릴리스, #29 시작 명령 수정 반영, 이후 릴리스.
+
+배포 단계의 PR(#27 이후)은 팀원 리뷰를 받기 어려운 일정이라 작성자가 검증 후 직접 머지했고, 사유를 각 PR 본문의 "머지 메모"에 남겼습니다.
 
 ---
 
@@ -680,7 +700,7 @@ docs/<내용>            ← 문서 작업 브랜치
 ## 13. 테스트
 
 ```bash
-python -m pytest -q        # 44 passed
+python -m pytest -q        # 53 passed
 ```
 
 | 파일 | 개수 | 확인하는 것 | 작성 |
@@ -689,6 +709,7 @@ python -m pytest -q        # 44 passed
 | `tests/test_chat.py` | 13 | 로그인 필요, 빈 입력·2,000자 검증, 저장, AI 실패 시 미저장, 최근 5개 컨텍스트와 사용자 격리, 타임아웃 504·실패 502·DB 실패 500, 로그 이벤트와 `request_id`, 민감정보 비노출 | B |
 | `tests/test_pages.py` | 7 | `/` 리다이렉트, 가입·로그인 페이지 렌더링, 정적 파일, `/chat` 접근 제어 | C |
 | `tests/test_logs.py` | 8 | `/api/me/chats` 로그인 필요·본인 로그만·정렬·limit/offset·범위 검증, `/history` 접근 제어·KST 표시·빈 상태, `check_logs.sql` 실행 결과 | C |
+| `tests/test_admin.py` | 9 | `/admin` 비밀번호 미설정 시 404, 미인증·틀린 인증 401, 일반 로그인으로는 접근 불가, 전체 사용자·로그 표시와 최신순, 해시 원문 비노출, 사용자 필터, 빈 상태 | C |
 
 - `tests/conftest.py` 가 앱 import 전에 `SECRET_KEY` 와 임시 `DATABASE_URL` 을 환경 변수로 지정해 개발자의 `.env` 와 `app.db` 를 건드리지 않습니다.
 - AI 호출은 FastAPI `dependency_overrides` 로 가짜 클라이언트(`FakeAIClient`)를 주입해 실제 네트워크 요청 없이 성공·타임아웃·실패를 재현합니다.
