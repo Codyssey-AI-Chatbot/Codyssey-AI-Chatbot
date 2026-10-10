@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Codyssey AI 챗봇{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">Codyssey AI 챗봇</a>
+    <nav class="nav">
+      {% if user %}
+        <a href="/chat">채팅</a>
+        <span class="nav-user">{{ user.username }}</span>
+        <button type="button" id="logout-button" class="button-link">로그아웃</button>
+      {% else %}
+        <a href="/login">로그인</a>
+        <a href="/signup">회원가입</a>
+      {% endif %}
+    </nav>
+  </header>
+
+  <main class="page">
+    {% block content %}{% endblock %}
+  </main>
+
+  {% if user %}
+  <script>
+    // 로그아웃은 A의 POST /api/auth/logout 을 호출한 뒤 로그인 페이지로 이동한다.
+    document.getElementById("logout-button").addEventListener("click", async () => {
+      await fetch("/api/auth/logout", { method: "POST" });
+      window.location.assign("/login");
+    });
+  </script>
+  {% endif %}
+  {% block scripts %}{% endblock %}
+</body>
+</html>
