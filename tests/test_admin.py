@@ -40,8 +40,10 @@ def add_user_with_logs(username: str, count: int) -> int:
         return user.id
 
 
-def test_admin_page_is_disabled_without_password(client):
-    assert settings.admin_password is None  # 테스트 환경에는 ADMIN_PASSWORD 가 없다
+@pytest.mark.parametrize("unset_value", [None, SecretStr("")])
+def test_admin_page_is_disabled_without_password(client, monkeypatch, unset_value):
+    # 개발자의 .env 에 ADMIN_PASSWORD 가 있어도 영향을 받지 않도록 미설정 상태를 직접 만든다.
+    monkeypatch.setattr(settings, "admin_password", unset_value)
 
     response = client.get("/admin", auth=ADMIN)
 

@@ -407,7 +407,7 @@ uvicorn app.main:app --reload
 테스트:
 
 ```bash
-python -m pytest -q        # 53 passed
+python -m pytest -q        # 54 passed
 ```
 
 테스트는 임시 디렉터리의 별도 SQLite 파일과 가짜 AI 클라이언트를 사용하므로, 내 `.env`, `app.db`, 실제 AI API 에 영향을 주지 않습니다.
@@ -658,7 +658,7 @@ Render 무료 플랜은 Shell 접속을 지원하지 않으므로, 배포된 서
 - **PR #12 `feature/context-strategy`** (3 커밋): 사용자별 최근 5개 대화 조회, 컨텍스트를 AI 요청에 연결, 컨텍스트 격리·순서 테스트.
 - **PR #14 `feature/logging-errors`** (3 커밋): `request_id` 기반 이벤트 로그(`request_received`, `ai_call_*`, `db_save_*`, `latency_ms`), 타임아웃 504·AI 실패 502·DB 실패 500 응답과 롤백, 민감정보 비노출 테스트.
 
-### C — @ADOHI (UI·로그 조회·배포·문서) · 28 커밋 · 기능 PR 9개, 릴리스 PR
+### C — @ADOHI (UI·로그 조회·배포·문서) · 29 커밋 · 기능 PR 9개, 릴리스 PR
 
 - **PR #21 `feature/base-ui`** (4 커밋): 공통 레이아웃 템플릿과 CSS, 회원가입 페이지, 로그인 페이지(`auth.js` 로 API 호출과 오류 표시), 페이지 라우트 테스트.
 - **PR #22 `feature/chat-ui`** (3 커밋): 로그인 보호된 `/chat` 페이지 마크업, `chat.js`(fetch 로 질문 전송·말풍선 표시), 로딩 표시·입력 잠금·에러 코드 말풍선·세션 만료 처리.
@@ -667,8 +667,8 @@ Render 무료 플랜은 Shell 접속을 지원하지 않으므로, 배포된 서
 - **PR #25 `docs/readme`** (4 커밋): 이 README 전체, `docs/team-roles.md` 담당자 갱신, 무료 플랜 제약 정정.
 - **PR #28 `fix/render-health-timeout`** (1 커밋): 첫 배포의 상태 확인 타임아웃에 대응해 시작 명령에 `--loop asyncio` 추가. 원인이 아닌 것으로 확인되어 #34 에서 되돌림.
 - **PR #30 `docs/deploy-url`** (1 커밋): 외부 접속을 확인하고 README 에 배포 URL 기입.
-- **PR #32 `feature/admin-log-view`** (7 커밋): 관리자 조회 페이지 `/admin`(HTTP Basic 인증), 전체 로그·사용자별 대화 수 조회 함수, `ADMIN_PASSWORD` 설정, 테스트 9개, README 반영.
-- **PR #34 `fix/render-manual-deploy`** (2 커밋): Render 배포 이력을 확인해 `--loop asyncio` 를 되돌리고, push 로는 재배포되지 않아 수동 배포가 필요하다는 점을 `render.yaml` 과 README 에 반영.
+- **PR #32 `feature/admin-log-view`** (7 커밋): 관리자 조회 페이지 `/admin`(HTTP Basic 인증), 전체 로그·사용자별 대화 수 조회 함수, `ADMIN_PASSWORD` 설정, 테스트 9개(이후 10개), README 반영.
+- **PR #34 `fix/render-manual-deploy`** (3 커밋): Render 배포 이력을 확인해 `--loop asyncio` 를 되돌리고, push 로는 재배포되지 않아 수동 배포가 필요하다는 점을 `render.yaml` 과 README 에 반영. 관리자 테스트가 로컬 `.env` 에 의존하던 문제 수정.
 - **릴리스 PR** (`develop` → `main`, 커밋 없이 머지 커밋만): #27 첫 릴리스, #29, #33 과 이후 릴리스.
 
 배포 단계의 PR(#27 이후)은 팀원 리뷰를 받기 어려운 일정이라 작성자가 검증 후 직접 머지했고, 사유를 각 PR 본문의 "머지 메모"에 남겼습니다.
@@ -708,7 +708,7 @@ docs/<내용>            ← 문서 작업 브랜치
 ## 13. 테스트
 
 ```bash
-python -m pytest -q        # 53 passed
+python -m pytest -q        # 54 passed
 ```
 
 | 파일 | 개수 | 확인하는 것 | 작성 |
@@ -717,7 +717,7 @@ python -m pytest -q        # 53 passed
 | `tests/test_chat.py` | 13 | 로그인 필요, 빈 입력·2,000자 검증, 저장, AI 실패 시 미저장, 최근 5개 컨텍스트와 사용자 격리, 타임아웃 504·실패 502·DB 실패 500, 로그 이벤트와 `request_id`, 민감정보 비노출 | B |
 | `tests/test_pages.py` | 7 | `/` 리다이렉트, 가입·로그인 페이지 렌더링, 정적 파일, `/chat` 접근 제어 | C |
 | `tests/test_logs.py` | 8 | `/api/me/chats` 로그인 필요·본인 로그만·정렬·limit/offset·범위 검증, `/history` 접근 제어·KST 표시·빈 상태, `check_logs.sql` 실행 결과 | C |
-| `tests/test_admin.py` | 9 | `/admin` 비밀번호 미설정 시 404, 미인증·틀린 인증 401, 일반 로그인으로는 접근 불가, 전체 사용자·로그 표시와 최신순, 해시 원문 비노출, 사용자 필터, 빈 상태 | C |
+| `tests/test_admin.py` | 10 | `/admin` 비밀번호 미설정 시 404, 미인증·틀린 인증 401, 일반 로그인으로는 접근 불가, 전체 사용자·로그 표시와 최신순, 해시 원문 비노출, 사용자 필터, 빈 상태 | C |
 
 - `tests/conftest.py` 가 앱 import 전에 `SECRET_KEY` 와 임시 `DATABASE_URL` 을 환경 변수로 지정해 개발자의 `.env` 와 `app.db` 를 건드리지 않습니다.
 - AI 호출은 FastAPI `dependency_overrides` 로 가짜 클라이언트(`FakeAIClient`)를 주입해 실제 네트워크 요청 없이 성공·타임아웃·실패를 재현합니다.
