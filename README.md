@@ -416,7 +416,7 @@ python -m pytest -q        # 53 passed
 
 ## 6. 배포 방법 (Render)
 
-배포 흐름: `develop` → `main` 릴리스 PR 머지 → Render 가 `main` 을 빌드·배포. 설정은 저장소의 [`render.yaml`](render.yaml) 한 파일에 있습니다.
+배포 흐름: `develop` → `main` 릴리스 PR 머지 → Render 에서 `main` 을 수동 배포. 설정은 저장소의 [`render.yaml`](render.yaml) 한 파일에 있습니다.
 
 ### 처음 배포
 
@@ -426,7 +426,14 @@ python -m pytest -q        # 53 passed
 4. **Apply** 를 누르면 빌드(`pip install -r requirements.txt`) → 기동(`uvicorn app.main:app --host 0.0.0.0 --port $PORT`) → 헬스체크(`/health`) 순서로 진행됩니다.
 5. 배포가 끝나면 `https://<서비스이름>.onrender.com/health` 가 `{"status":"ok"}` 를 돌려줍니다. 이 URL 을 이 문서 맨 위 **배포 URL** 에 적습니다.
 
-이후에는 `main` 에 커밋이 추가될 때마다 자동으로 재배포됩니다.
+### 재배포
+
+이 서비스는 Render 가 GitHub 연동 없이 공개 저장소 URL 로 코드를 가져옵니다. 그래서 `main` 에 push 해도 **자동으로 재배포되지 않습니다.** Render 문서도 공개 저장소 URL 로 만든 서비스는 수동으로 배포해야 한다고 안내합니다. 실제로 저장소에는 Render 웹훅이 없습니다.
+
+- **코드만 바뀐 경우**: 서비스 페이지의 **Manual Deploy → Deploy latest commit**
+- **`render.yaml` 이 바뀐 경우**(환경 변수, 시작 명령 등): Blueprint 페이지의 **Manual Sync**. 바뀐 설정이 반영되고 재배포됩니다
+
+자동 배포를 쓰려면 Render 가 GitHub 연동으로 이 저장소에 접근할 수 있어야 합니다(조직에 Render GitHub App 설치).
 
 ### `render.yaml` 요약
 
@@ -435,7 +442,7 @@ python -m pytest -q        # 53 passed
 | `runtime` / `plan` / `region` | python / free / singapore | 한국에서 가장 가까운 리전 |
 | `branch` | `main` | 배포 브랜치. `develop` 은 배포하지 않음 |
 | `buildCommand` | `pip install -r requirements.txt` | |
-| `startCommand` | `uvicorn app.main:app --host 0.0.0.0 --port $PORT --loop asyncio` | `PORT` 는 Render 가 주입. `--loop asyncio` 는 아래 주의사항 참고 |
+| `startCommand` | `uvicorn app.main:app --host 0.0.0.0 --port $PORT` | `PORT` 는 Render 가 주입 |
 | `healthCheckPath` | `/health` | 실패하면 배포를 롤백 |
 | `PYTHON_VERSION` | `3.10.11` | 로컬 개발·테스트와 동일 |
 | `SECRET_KEY` | `generateValue: true` | Render 가 생성 |
@@ -448,7 +455,7 @@ python -m pytest -q        # 53 passed
 
 - **무료 플랜은 15분 동안 요청이 없으면 잠듭니다.** 다음 첫 요청은 깨어나는 데 약 1분이 걸리므로 평가 직전에 한 번 접속해 깨워 두세요.
 - **무료 플랜은 잠들거나 재시작·재배포될 때마다 디스크가 초기화됩니다.** SQLite 파일(`app.db`)도 함께 사라져 가입 정보와 대화 기록이 남지 않습니다. 그래서 배포 환경에서는 "가입 → 채팅 → 기록 조회"를 끊지 않고 이어서 확인하고, 누적 저장과 SQL 확인은 로컬 실행에서 함께 확인합니다. 무료 플랜에는 Persistent Disk 를 붙일 수 없으므로, 데이터를 유지하려면 유료 플랜의 디스크(`DATABASE_URL=sqlite:////var/data/app.db`)나 PostgreSQL 로 바꿉니다.
-- **첫 배포는 "Timed out after waiting for internal health check" 로 한 번 취소되었습니다.** 빌드와 앱 기동은 성공했지만 상태 확인(`/health`)이 15분간 통과하지 못했고, 원인은 확인하지 못했습니다. 이후 배포는 정상이며, 리눅스에서만 쓰이는 uvloop 변수를 없애려고 시작 명령에 `--loop asyncio` 를 넣어 두었습니다. 같은 일이 생기면 Render 의 Manual Deploy 로 다시 배포합니다.
+- **첫 배포는 "Timed out after waiting for internal health check" 로 한 번 실패했습니다.** 빌드와 앱 기동은 성공했지만 상태 확인(`/health`)이 15분간 통과하지 못했습니다. 같은 커밋을 같은 설정으로 Manual Deploy 하자 2분 만에 정상 배포되어, 코드나 설정이 아닌 일시적인 문제로 판단했습니다. 같은 일이 생기면 Manual Deploy 로 다시 배포합니다.
 - `SESSION_COOKIE_SECURE=true` 는 HTTPS 전용입니다. HTTP 로만 서비스하는 환경(예: 공인 IP 의 리눅스 서버)에서는 `false` 로 두어야 로그인이 됩니다.
 
 ### 대안: 리눅스 서버에서 직접 실행
@@ -651,17 +658,18 @@ Render 무료 플랜은 Shell 접속을 지원하지 않으므로, 배포된 서
 - **PR #12 `feature/context-strategy`** (3 커밋): 사용자별 최근 5개 대화 조회, 컨텍스트를 AI 요청에 연결, 컨텍스트 격리·순서 테스트.
 - **PR #14 `feature/logging-errors`** (3 커밋): `request_id` 기반 이벤트 로그(`request_received`, `ai_call_*`, `db_save_*`, `latency_ms`), 타임아웃 504·AI 실패 502·DB 실패 500 응답과 롤백, 민감정보 비노출 테스트.
 
-### C — @ADOHI (UI·로그 조회·배포·문서) · 26 커밋 · 기능 PR 8개, 릴리스 PR
+### C — @ADOHI (UI·로그 조회·배포·문서) · 28 커밋 · 기능 PR 9개, 릴리스 PR
 
 - **PR #21 `feature/base-ui`** (4 커밋): 공통 레이아웃 템플릿과 CSS, 회원가입 페이지, 로그인 페이지(`auth.js` 로 API 호출과 오류 표시), 페이지 라우트 테스트.
 - **PR #22 `feature/chat-ui`** (3 커밋): 로그인 보호된 `/chat` 페이지 마크업, `chat.js`(fetch 로 질문 전송·말풍선 표시), 로딩 표시·입력 잠금·에러 코드 말풍선·세션 만료 처리.
 - **PR #23 `feature/log-view`** (4 커밋): `GET /api/me/chats` 내 로그 조회 API, `/history` 내 대화 기록 화면과 채팅 화면의 최근 대화 복원, `scripts/check_logs.sql`·`check_logs.py`, 로그 조회 테스트 8개.
 - **PR #24 `feature/deploy`** (2 커밋): Render Blueprint `render.yaml` (헬스체크, 비밀 값은 대시보드 입력), 무료 플랜 제약 주석 정정.
 - **PR #25 `docs/readme`** (4 커밋): 이 README 전체, `docs/team-roles.md` 담당자 갱신, 무료 플랜 제약 정정.
-- **PR #28 `fix/render-health-timeout`** (1 커밋): 첫 배포의 상태 확인 타임아웃에 대응해 시작 명령에 `--loop asyncio` 추가.
+- **PR #28 `fix/render-health-timeout`** (1 커밋): 첫 배포의 상태 확인 타임아웃에 대응해 시작 명령에 `--loop asyncio` 추가. 원인이 아닌 것으로 확인되어 #34 에서 되돌림.
 - **PR #30 `docs/deploy-url`** (1 커밋): 외부 접속을 확인하고 README 에 배포 URL 기입.
 - **PR #32 `feature/admin-log-view`** (7 커밋): 관리자 조회 페이지 `/admin`(HTTP Basic 인증), 전체 로그·사용자별 대화 수 조회 함수, `ADMIN_PASSWORD` 설정, 테스트 9개, README 반영.
-- **릴리스 PR** (`develop` → `main`, 커밋 없이 머지 커밋만): #27 첫 릴리스, #29 시작 명령 수정 반영, 이후 릴리스.
+- **PR #34 `fix/render-manual-deploy`** (2 커밋): Render 배포 이력을 확인해 `--loop asyncio` 를 되돌리고, push 로는 재배포되지 않아 수동 배포가 필요하다는 점을 `render.yaml` 과 README 에 반영.
+- **릴리스 PR** (`develop` → `main`, 커밋 없이 머지 커밋만): #27 첫 릴리스, #29, #33 과 이후 릴리스.
 
 배포 단계의 PR(#27 이후)은 팀원 리뷰를 받기 어려운 일정이라 작성자가 검증 후 직접 머지했고, 사유를 각 PR 본문의 "머지 메모"에 남겼습니다.
 
