@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}관리자 - Codyssey AI 챗봇{% endblock %}
+
+{% block content %}
+<section class="history admin">
+  <div class="history-head">
+    <h1>관리자: 사용자와 대화 로그</h1>
+    <p class="muted">
+      DB 의 <code>users</code>, <code>chat_logs</code> 테이블을 그대로 보여 줍니다. 시각은 한국 표준시(KST) 기준이고,
+      비밀번호는 해시로만 저장되어 방식 이름만 표시합니다.
+    </p>
+  </div>
+
+  <h2 class="section-title">사용자 ({{ users|length }}명)</h2>
+  {% if users %}
+  <table class="log-table">
+    <thead>
+      <tr><th>id</th><th>아이디</th><th>가입 시각</th><th>대화 수</th><th>비밀번호 저장 방식</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for user in users %}
+      <tr{% if user.id == selected_user_id %} class="row-selected"{% endif %}>
+        <td>{{ user.id }}</td>
+        <td>{{ user.username }}</td>
+        <td class="nowrap">{{ user.created_at }}</td>
+        <td>{{ user.chat_count }}</td>
+        <td>{{ user.hash_scheme }} 해시</td>
+        <td class="nowrap"><a href="/admin?user_id={{ user.id }}">이 사용자만 보기</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="messages-empty">아직 가입한 사용자가 없습니다.</p>
+  {% endif %}
+
+  <h2 class="section-title">
+    대화 로그
+    {% if selected_user_id is not none %}
+      (사용자 id {{ selected_user_id }}, 최근 {{ logs|length }}건) <a class="section-link" href="/admin">전체 보기</a>
+    {% else %}
+      (전체, 최근 {{ logs|length }}건 / 최대 {{ page_size }}건)
+    {% endif %}
+  </h2>
+  {% if logs %}
+  <table class="log-table">
+    <thead>
+      <tr><th>id</th><th>사용자</th><th>시각</th><th>질문</th><th>답변</th></tr>
+    </thead>
+    <tbody>
+      {% for log in logs %}
+      <tr>
+        <td>{{ log.id }}</td>
+        <td class="nowrap"><a href="/admin?user_id={{ log.user_id }}">{{ log.username }}</a></td>
+        <td class="nowrap">{{ log.created_at }}</td>
+        <td>{{ log.question }}</td>
+        <td>{{ log.answer }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="messages-empty">표시할 대화 로그가 없습니다.</p>
+  {% endif %}
+</section>
+{% endblock %}

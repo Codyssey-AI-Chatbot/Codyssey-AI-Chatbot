@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     ai_model: str = "gpt-5.4"
     ai_timeout_seconds: float = 20
 
+    # 관리자 페이지(/admin) 비밀번호. 비어 있으면 관리자 페이지를 끈다(404). (C 가 추가)
+    admin_password: SecretStr | None = None
+
     # .env 에 아직 정의하지 않은 다른 팀원의 설정이 있어도 오류 없이 무시한다.
     model_config = SettingsConfigDict(
         env_file=BASE_DIR / ".env",
