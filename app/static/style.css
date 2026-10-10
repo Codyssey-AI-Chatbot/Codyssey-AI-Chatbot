@@ -161,7 +161,7 @@ input:focus, textarea:focus { outline: 2px solid var(--primary); outline-offset:
   font-size: 0.95rem;
 }
 .log-table th, .log-table td { padding: 10px 12px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--border); }
-.log-table th { background: var(--bg); font-weight: 600; }
+.log-table th { background: var(--bg); font-weight: 600; white-space: nowrap; }
 .log-table td { white-space: pre-wrap; word-break: break-word; }
 .log-table td.nowrap { white-space: nowrap; color: var(--muted); }
 
