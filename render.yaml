@@ -1,10 +1,13 @@
 # Render Blueprint (https://render.com/docs/blueprint-spec)
 #
 # 배포 방법: Render 대시보드 → New → Blueprint → 이 저장소 선택 → Apply
-#   1) 이 파일을 읽어 웹 서비스 1개를 만든다. (main 브랜치, push 시 자동 재배포)
+#   1) 이 파일을 읽어 웹 서비스 1개를 만든다. (main 브랜치를 배포)
 #   2) sync: false 로 표시된 AI_API_KEY 는 Apply 단계에서 직접 입력한다. (저장소에 두지 않는다)
 #   3) SECRET_KEY 와 ADMIN_PASSWORD 는 Render 가 임의 값으로 생성한다.
 #      ADMIN_PASSWORD(관리자 페이지 /admin 의 비밀번호)는 대시보드의 Environment 탭에서 확인한다.
+#
+# 재배포: 저장소를 공개 URL 로 연결한 서비스는 push 로 재배포되지 않는다.
+#   코드만 바뀌면 서비스의 Manual Deploy, 이 파일이 바뀌면 Blueprint 의 Manual Sync 를 누른다.
 #
 # 주의: 무료 플랜은 15분 미사용으로 잠들거나 재시작·재배포될 때마다 디스크가 초기화되어 SQLite(app.db) 데이터가 사라진다.
 #       무료 플랜에는 Persistent Disk 를 붙일 수 없다. 데이터를 유지하려면 유료 플랜의 디스크나 PostgreSQL 로 DATABASE_URL 을 바꾼다.
@@ -16,9 +19,7 @@ services:
     region: singapore
     branch: main
     buildCommand: pip install -r requirements.txt
-    # --loop asyncio: 첫 배포가 "앱은 기동했지만 상태 확인(/health)이 15분간 통과하지 못해" 취소된 적이 있다.
-    # 원인은 확인하지 못했다. 리눅스에서만 쓰이는 uvloop 라는 변수를 없애려고 표준 asyncio 루프로 고정해 두었다.
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --loop asyncio
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION
