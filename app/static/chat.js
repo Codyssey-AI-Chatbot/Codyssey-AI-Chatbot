@@ -85,3 +85,16 @@ input.addEventListener("keydown", (event) => {
     form.requestSubmit();
   }
 });
+
+// 화면을 열면 최근 대화를 불러와 이어서 볼 수 있게 한다. (AI 가 기억하는 범위도 이 안에 있다)
+async function loadRecentHistory() {
+  const response = await fetch("/api/me/chats?limit=20").catch(() => null);
+  if (!response?.ok) return;
+  const logs = await response.json();
+  logs.reverse().forEach(({ question, answer }) => {
+    appendBubble("user", question);
+    appendBubble("assistant", answer);
+  });
+}
+
+loadRecentHistory();

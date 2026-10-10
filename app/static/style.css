@@ -147,3 +147,20 @@ input:focus, textarea:focus { outline: 2px solid var(--primary); outline-offset:
   position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
   overflow: hidden; clip: rect(0 0 0 0); border: 0;
 }
+
+/* 내 대화 기록 */
+.history-head h1 { margin: 0 0 4px; font-size: 1.4rem; }
+.muted { margin: 0 0 16px; color: var(--muted); font-size: 0.95rem; }
+.log-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  font-size: 0.95rem;
+}
+.log-table th, .log-table td { padding: 10px 12px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--border); }
+.log-table th { background: var(--bg); font-weight: 600; }
+.log-table td { white-space: pre-wrap; word-break: break-word; }
+.log-table td.nowrap { white-space: nowrap; color: var(--muted); }
