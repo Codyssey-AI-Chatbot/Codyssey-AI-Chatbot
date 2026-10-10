@@ -5,9 +5,12 @@ Jinja2 템플릿으로 HTML 만 그린다. 데이터 처리와 인증 판단은 
 """
 from pathlib import Path
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+
+from app.auth import get_current_user_or_redirect
+from app.models import User
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 
@@ -32,3 +35,9 @@ def login_page(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
         request, "login.html", {"signed_up": "signup" in request.query_params}
     )
+
+
+@router.get("/chat", response_class=HTMLResponse)
+def chat_page(request: Request, user: User = Depends(get_current_user_or_redirect)) -> HTMLResponse:
+    """채팅 화면. 비로그인 사용자는 A 의 의존성이 /login 으로 보낸다."""
+    return templates.TemplateResponse(request, "chat.html", {"user": user})
