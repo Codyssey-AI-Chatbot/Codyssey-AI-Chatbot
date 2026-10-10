@@ -1,0 +1,166 @@
+/* 공통 스타일: 색상 변수, 상단 바, 페이지 컨테이너, 폼, 버튼 */
+:root {
+  --bg: #f4f6fb;
+  --surface: #ffffff;
+  --border: #dfe3ec;
+  --text: #1f2430;
+  --muted: #6b7280;
+  --primary: #3b5bdb;
+  --primary-hover: #3250c4;
+  --danger: #c92a2a;
+  --danger-bg: #fff5f5;
+  --radius: 10px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  color: var(--text);
+  background: var(--bg);
+  line-height: 1.5;
+}
+
+a { color: var(--primary); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* 상단 바 */
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  height: 56px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.brand { font-weight: 700; color: var(--text); }
+.nav { display: flex; align-items: center; gap: 16px; }
+.nav-user { color: var(--muted); }
+
+/* 페이지 컨테이너 */
+.page {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 24px 16px;
+}
+
+/* 카드형 폼 (회원가입, 로그인) */
+.card {
+  max-width: 420px;
+  margin: 40px auto;
+  padding: 28px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.card h1 { margin: 0 0 20px; font-size: 1.4rem; }
+.card p.hint { margin: 16px 0 0; color: var(--muted); font-size: 0.95rem; }
+
+.field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+.field label { font-size: 0.95rem; font-weight: 600; }
+.field small { color: var(--muted); }
+
+input[type="text"],
+input[type="password"],
+textarea {
+  width: 100%;
+  padding: 10px 12px;
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+input:focus, textarea:focus { outline: 2px solid var(--primary); outline-offset: 1px; border-color: var(--primary); }
+
+.button {
+  display: inline-block;
+  width: 100%;
+  padding: 10px 16px;
+  font: inherit;
+  font-weight: 600;
+  color: #fff;
+  background: var(--primary);
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.button:hover { background: var(--primary-hover); }
+.button:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.button-link {
+  padding: 0;
+  font: inherit;
+  color: var(--primary);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+.button-link:hover { text-decoration: underline; }
+
+/* 알림 메시지 */
+.notice, .form-error { margin: 0 0 14px; padding: 10px 12px; border-radius: 8px; font-size: 0.95rem; }
+.notice { color: #1b5e20; background: #f1f8e9; border: 1px solid #c5e1a5; }
+.form-error { color: var(--danger); background: var(--danger-bg); border: 1px solid #ffc9c9; }
+.form-error:empty { display: none; }
+
+/* 채팅 화면 */
+.chat { display: flex; flex-direction: column; height: calc(100vh - 56px - 48px); min-height: 420px; }
+.messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+.messages-empty { margin: 40px 0; text-align: center; color: var(--muted); }
+
+.bubble {
+  max-width: 78%;
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border-radius: 14px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.bubble-user { margin-left: auto; color: #fff; background: var(--primary); border-bottom-right-radius: 4px; }
+.bubble-assistant { background: var(--bg); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+.bubble-error { color: var(--danger); background: var(--danger-bg); border: 1px solid #ffc9c9; border-bottom-left-radius: 4px; }
+.bubble-error code { font-size: 0.85em; }
+
+.composer {
+  display: flex;
+  gap: 10px;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-top: 0;
+  border-radius: 0 0 var(--radius) var(--radius);
+}
+.composer textarea { flex: 1; resize: none; }
+.composer .button { width: auto; align-self: flex-end; }
+
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip: rect(0 0 0 0); border: 0;
+}
+
+/* 내 대화 기록 */
+.history-head h1 { margin: 0 0 4px; font-size: 1.4rem; }
+.muted { margin: 0 0 16px; color: var(--muted); font-size: 0.95rem; }
+.log-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  font-size: 0.95rem;
+}
+.log-table th, .log-table td { padding: 10px 12px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--border); }
+.log-table th { background: var(--bg); font-weight: 600; }
+.log-table td { white-space: pre-wrap; word-break: break-word; }
+.log-table td.nowrap { white-space: nowrap; color: var(--muted); }
