@@ -164,3 +164,10 @@ input:focus, textarea:focus { outline: 2px solid var(--primary); outline-offset:
 .log-table th { background: var(--bg); font-weight: 600; }
 .log-table td { white-space: pre-wrap; word-break: break-word; }
 .log-table td.nowrap { white-space: nowrap; color: var(--muted); }
+
+/* 관리자 화면 */
+.page:has(.admin) { max-width: 1100px; }  /* 관리자 화면만 넓게 */
+.section-title { margin: 28px 0 10px; font-size: 1.1rem; }
+.section-link { margin-left: 8px; font-size: 0.9rem; font-weight: 400; }
+.log-table tr.row-selected td { background: #edf2ff; }
+.muted code { font-size: 0.9em; }
