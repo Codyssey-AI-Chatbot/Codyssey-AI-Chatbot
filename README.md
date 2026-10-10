@@ -2,7 +2,7 @@
 
 로그인한 사용자가 웹 화면에서 질문을 입력하면 서버가 AI API 를 호출해 답변을 돌려주고, 모든 대화를 DB 에 누적 저장해 사용자별로 조회할 수 있는 **웹 기반 AI 챗봇 서비스**입니다. Codyssey AI/SW 기초 과정 텀 프로젝트(3인 팀)로 FastAPI + SQLite 로 구현했습니다.
 
-- **배포 URL**: _(Render 배포 후 여기에 적습니다. 예: `https://codyssey-ai-chatbot.onrender.com`)_
+- **배포 URL**: https://codyssey-ai-chatbot.onrender.com (Render 무료 플랜이라 15분 미사용 시 잠들며, 깨어나는 첫 접속은 약 1분 걸립니다. 상태 확인은 [`/health`](https://codyssey-ai-chatbot.onrender.com/health))
 - **저장소**: https://github.com/Codyssey-AI-Chatbot/Codyssey-AI-Chatbot
 - **기술 스택**: Python 3.10, FastAPI, SQLAlchemy 2, SQLite, Jinja2, OpenAI Python SDK(OpenAI 호환 API), pytest
 
