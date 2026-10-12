@@ -672,7 +672,7 @@ Render 무료 플랜은 Shell 접속을 지원하지 않으므로, 배포된 서
 - **PR #14 `feature/logging-errors`** (3 커밋): `request_id` 기반 이벤트 로그(`request_received`, `ai_call_*`, `db_save_*`, `latency_ms`), 타임아웃 504·AI 실패 502·DB 실패 500 응답과 롤백, 민감정보 비노출 테스트.
 - **PR #39 `feature/ai-config-error`** (1 커밋): `AI_API_KEY` 가 없으면 입력 검증보다 먼저 `500` 이 나던 문제(이슈 #20) 수정. 설정 누락을 AI 호출 시점에 `AIConfigurationError` 로 알리고 `503 AI_NOT_CONFIGURED` 로 응답, 테스트 3개.
 
-### C — @ADOHI (UI·로그 조회·배포·문서) · 52 커밋 · 기능 PR 17개, 릴리스 PR
+### C — @ADOHI (UI·로그 조회·배포·문서) · 55 커밋 · 기능 PR 18개, 릴리스 PR
 
 - **PR #21 `feature/base-ui`** (4 커밋): 공통 레이아웃 템플릿과 CSS, 회원가입 페이지, 로그인 페이지(`auth.js` 로 API 호출과 오류 표시), 페이지 라우트 테스트.
 - **PR #22 `feature/chat-ui`** (3 커밋): 로그인 보호된 `/chat` 페이지 마크업, `chat.js`(fetch 로 질문 전송·말풍선 표시), 로딩 표시·입력 잠금·에러 코드 말풍선·세션 만료 처리.
@@ -691,6 +691,7 @@ Render 무료 플랜은 Shell 접속을 지원하지 않으므로, 배포된 서
 - **PR #44 `docs/scaling-improvements`** (3 커밋): 동시 접속이 몰릴 때의 병목 분석과 개선안 5가지를 정리한 제안 문서 `docs/scaling-improvements.md` 추가. 코드는 바꾸지 않고, 저장소 밖의 사본에서 수정 전후를 실험한 결과를 실음.
 - **PR #47 `feature/history-paging`** (5 커밋): 지난 대화를 끝까지 볼 수 있게 함. 채팅 화면은 위로 스크롤하면 이전 대화를 20개씩 이어 불러오고, `/history` 는 50건씩 페이지로 나눔. `GET /api/me/chats` 에 `before_id` 추가, 테스트 2개.
 - **PR #49 `feature/chats-fetch-all`** (3 커밋): `GET /api/me/chats?all=true` 로 본인 로그 전체를 한 번에 받는 옵션 추가, 대화 기록 화면에 전체 JSON 링크, 테스트 1개.
+- **PR #52 `docs/align-rules-and-qna`** (3 커밋): 협업 규칙 문서(`docs/team-roles.md`, 12장)를 실제 운영과 맞게 정정. 승인 후 머지와 브랜치 보호를 지키지 못한 사실을 그대로 적음. 퍼실 문답 Q&A 를 10월 12일의 변경에 맞춰 갱신.
 - **릴리스 PR** (`develop` → `main`, 커밋 없이 머지 커밋만): #27 첫 릴리스부터 배포할 때마다 하나씩 만들었습니다. [전체 목록](https://github.com/Codyssey-AI-Chatbot/Codyssey-AI-Chatbot/pulls?q=is%3Apr+is%3Amerged+base%3Amain)
 
 배포 단계의 PR(#27 이후)은 팀원 리뷰를 받기 어려운 일정이라 작성자가 검증 후 직접 머지했고, 사유를 각 PR 본문의 "머지 메모"에 남겼습니다.
