@@ -669,7 +669,7 @@ Render 무료 플랜은 Shell 접속을 지원하지 않으므로, 배포된 서
 - **PR #14 `feature/logging-errors`** (3 커밋): `request_id` 기반 이벤트 로그(`request_received`, `ai_call_*`, `db_save_*`, `latency_ms`), 타임아웃 504·AI 실패 502·DB 실패 500 응답과 롤백, 민감정보 비노출 테스트.
 - **PR #39 `feature/ai-config-error`** (1 커밋): `AI_API_KEY` 가 없으면 입력 검증보다 먼저 `500` 이 나던 문제(이슈 #20) 수정. 설정 누락을 AI 호출 시점에 `AIConfigurationError` 로 알리고 `503 AI_NOT_CONFIGURED` 로 응답, 테스트 3개.
 
-### C — @ADOHI (UI·로그 조회·배포·문서) · 37 커밋 · 기능 PR 12개, 릴리스 PR
+### C — @ADOHI (UI·로그 조회·배포·문서) · 39 커밋 · 기능 PR 13개, 릴리스 PR
 
 - **PR #21 `feature/base-ui`** (4 커밋): 공통 레이아웃 템플릿과 CSS, 회원가입 페이지, 로그인 페이지(`auth.js` 로 API 호출과 오류 표시), 페이지 라우트 테스트.
 - **PR #22 `feature/chat-ui`** (3 커밋): 로그인 보호된 `/chat` 페이지 마크업, `chat.js`(fetch 로 질문 전송·말풍선 표시), 로딩 표시·입력 잠금·에러 코드 말풍선·세션 만료 처리.
@@ -683,7 +683,8 @@ Render 무료 플랜은 Shell 접속을 지원하지 않으므로, 배포된 서
 - **PR #36 `docs/qna-and-walkthrough`** (3 커밋): 발표 준비 문서 두 개(`docs/facilitator-qna.md`, `docs/role-c-walkthrough.md`)를 저장소에 추가하고, README 에 Render 대시보드 바로가기와 문서 링크 추가.
 - **PR #37 `chore/logout-script-static`** (2 커밋): `base.html` 에 직접 적혀 있던 로그아웃 스크립트를 다른 JS 와 같은 방식으로 `static/logout.js` 로 분리, 테스트와 문서 갱신.
 - **PR #38 `docs/requirements-mapping`** (3 커밋): 과제 문서 4장·6장의 요구 항목마다 구현 코드 링크와 검증 테스트를 정리한 `docs/requirements-mapping.md` 추가, 작업 설명서의 인용 오타 수정, README 반영.
-- **릴리스 PR** (`develop` → `main`, 커밋 없이 머지 커밋만): #27 첫 릴리스, #29, #33 과 이후 릴리스.
+- **PR #41 `docs/sync-ai-config-error`** (2 커밋): B 의 #39 를 문서에 반영. README 의 오류 코드·예외 처리 표와 테스트 수(57개), B 의 작업 요약, 발표 문서의 이슈 #20 상태 갱신.
+- **릴리스 PR** (`develop` → `main`, 커밋 없이 머지 커밋만): #27 첫 릴리스, #29, #33, #35, #40.
 
 배포 단계의 PR(#27 이후)은 팀원 리뷰를 받기 어려운 일정이라 작성자가 검증 후 직접 머지했고, 사유를 각 PR 본문의 "머지 메모"에 남겼습니다.
 
