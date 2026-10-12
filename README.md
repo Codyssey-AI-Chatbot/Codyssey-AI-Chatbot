@@ -145,7 +145,7 @@ sequenceDiagram
 | `app/errors.py` | `AITimeoutError`, `AIServiceError` | B |
 | `app/routers/pages.py` | `/`, `/signup`, `/login`, `/chat`, `/history`, `/admin` 템플릿 렌더링, 관리자 인증 | C |
 | `app/routers/logs.py` | `GET /api/me/chats` 내 로그 조회, 관리자 화면용 전체 조회 함수 | C |
-| `app/templates/`, `app/static/` | Jinja2 템플릿, CSS, `auth.js`(폼 전송), `chat.js`(채팅) | C |
+| `app/templates/`, `app/static/` | Jinja2 템플릿, CSS, `auth.js`(폼 전송), `chat.js`(채팅), `logout.js`(로그아웃) | C |
 | `scripts/check_logs.sql`, `scripts/check_logs.py` | DB 확인용 SQL 과 실행기 | C |
 | `render.yaml` | Render 배포 설정 | C |
 | `tests/` | `conftest.py`(A), `test_auth.py`(A), `test_chat.py`(B), `test_pages.py`·`test_logs.py`·`test_admin.py`(C) | 전원 |
@@ -170,7 +170,7 @@ sequenceDiagram
 │   │   ├── logs.py        # /api/me/chats
 │   │   └── pages.py       # 화면
 │   ├── templates/         # base, signup, login, chat, history, admin
-│   └── static/            # style.css, auth.js, chat.js
+│   └── static/            # style.css, auth.js, chat.js, logout.js
 ├── scripts/
 │   ├── check_logs.sql     # DB 확인용 SQL
 │   └── check_logs.py      # SQL 실행기 (sqlite3 CLI 없는 환경)
@@ -663,7 +663,7 @@ Render 무료 플랜은 Shell 접속을 지원하지 않으므로, 배포된 서
 - **PR #12 `feature/context-strategy`** (3 커밋): 사용자별 최근 5개 대화 조회, 컨텍스트를 AI 요청에 연결, 컨텍스트 격리·순서 테스트.
 - **PR #14 `feature/logging-errors`** (3 커밋): `request_id` 기반 이벤트 로그(`request_received`, `ai_call_*`, `db_save_*`, `latency_ms`), 타임아웃 504·AI 실패 502·DB 실패 500 응답과 롤백, 민감정보 비노출 테스트.
 
-### C — @ADOHI (UI·로그 조회·배포·문서) · 32 커밋 · 기능 PR 10개, 릴리스 PR
+### C — @ADOHI (UI·로그 조회·배포·문서) · 34 커밋 · 기능 PR 11개, 릴리스 PR
 
 - **PR #21 `feature/base-ui`** (4 커밋): 공통 레이아웃 템플릿과 CSS, 회원가입 페이지, 로그인 페이지(`auth.js` 로 API 호출과 오류 표시), 페이지 라우트 테스트.
 - **PR #22 `feature/chat-ui`** (3 커밋): 로그인 보호된 `/chat` 페이지 마크업, `chat.js`(fetch 로 질문 전송·말풍선 표시), 로딩 표시·입력 잠금·에러 코드 말풍선·세션 만료 처리.
@@ -675,6 +675,7 @@ Render 무료 플랜은 Shell 접속을 지원하지 않으므로, 배포된 서
 - **PR #32 `feature/admin-log-view`** (7 커밋): 관리자 조회 페이지 `/admin`(HTTP Basic 인증), 전체 로그·사용자별 대화 수 조회 함수, `ADMIN_PASSWORD` 설정, 테스트 9개(이후 10개), README 반영.
 - **PR #34 `fix/render-manual-deploy`** (3 커밋): Render 배포 이력을 확인해 `--loop asyncio` 를 되돌리고, push 로는 재배포되지 않아 수동 배포가 필요하다는 점을 `render.yaml` 과 README 에 반영. 관리자 테스트가 로컬 `.env` 에 의존하던 문제 수정.
 - **PR #36 `docs/qna-and-walkthrough`** (3 커밋): 발표 준비 문서 두 개(`docs/facilitator-qna.md`, `docs/role-c-walkthrough.md`)를 저장소에 추가하고, README 에 Render 대시보드 바로가기와 문서 링크 추가.
+- **PR #37 `chore/logout-script-static`** (2 커밋): `base.html` 에 직접 적혀 있던 로그아웃 스크립트를 다른 JS 와 같은 방식으로 `static/logout.js` 로 분리, 테스트와 문서 갱신.
 - **릴리스 PR** (`develop` → `main`, 커밋 없이 머지 커밋만): #27 첫 릴리스, #29, #33 과 이후 릴리스.
 
 배포 단계의 PR(#27 이후)은 팀원 리뷰를 받기 어려운 일정이라 작성자가 검증 후 직접 머지했고, 사유를 각 PR 본문의 "머지 메모"에 남겼습니다.

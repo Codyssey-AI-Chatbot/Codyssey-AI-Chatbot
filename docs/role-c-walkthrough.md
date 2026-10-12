@@ -77,6 +77,8 @@ def login_page(request: Request) -> HTMLResponse:
 
 → [base.html L10–L24](https://github.com/Codyssey-AI-Chatbot/Codyssey-AI-Chatbot/blob/a451065/app/templates/base.html#L10-L24) · 로그인 상태에 따라 메뉴가 바뀝니다(요구사항 2 "인증 상태에 따른 기능 구분"). 로그아웃 버튼은 [L29–L37](https://github.com/Codyssey-AI-Chatbot/Codyssey-AI-Chatbot/blob/a451065/app/templates/base.html#L29-L37) 의 작은 스크립트가 `POST /api/auth/logout` 을 부른 뒤 `/login` 으로 보냅니다. 다른 페이지는 `{% extends "base.html" %}` 로 본문만 채웁니다.
 
+> 이후 변경: 이 로그아웃 스크립트는 다른 JS 와의 일관성을 위해 [`app/static/logout.js`](../app/static/logout.js) 로 분리했습니다(PR #37). `base.html` 은 로그인한 화면에서만 `<script src="/static/logout.js">` 로 불러옵니다. 위 링크는 분리 전 코드입니다.
+
 ### 폼 공통 스크립트 `app/static/auth.js`
 
 회원가입·로그인 폼은 HTML 에 `data-api`(호출할 API)와 `data-next`(성공 시 이동 경로)만 적으면 이 스크립트 하나가 둘 다 처리합니다.
