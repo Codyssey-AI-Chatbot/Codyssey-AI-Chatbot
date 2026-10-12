@@ -40,14 +40,19 @@ class ChatLogOut(BaseModel):
 
 
 def list_user_chat_logs(
-    db: Session, user_id: int, *, limit: int, offset: int = 0, before_id: int | None = None
+    db: Session, user_id: int, *, limit: int | None, offset: int = 0, before_id: int | None = None
 ) -> list[ChatLog]:
-    """사용자 한 명의 대화 로그를 최신순으로 반환한다. before_id 를 주면 그보다 오래된 로그만."""
+    """사용자 한 명의 대화 로그를 최신순으로 반환한다. before_id 를 주면 그보다 오래된 로그만.
+
+    limit 이 None 이면 개수 제한 없이 전부 돌려준다.
+    """
     statement = select(ChatLog).where(ChatLog.user_id == user_id)
     if before_id is not None:
         # 로그는 현재 시각으로 추가만 되므로 id 가 작을수록 오래된 대화다.
         statement = statement.where(ChatLog.id < before_id)
-    statement = statement.order_by(ChatLog.created_at.desc(), ChatLog.id.desc()).limit(limit).offset(offset)
+    statement = statement.order_by(ChatLog.created_at.desc(), ChatLog.id.desc())
+    if limit is not None:
+        statement = statement.limit(limit).offset(offset)
     return list(db.scalars(statement))
 
 
@@ -85,6 +90,7 @@ def my_chats(
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT, description="가져올 개수"),
     offset: int = Query(0, ge=0, description="건너뛸 개수 (페이지 이동용)"),
     before_id: int | None = Query(None, ge=1, description="이 id 보다 오래된 로그만 (이어 불러오기용)"),
+    fetch_all: bool = Query(False, alias="all", description="true 면 limit 과 offset 을 무시하고 전부 돌려준다"),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[ChatLog]:
@@ -92,5 +98,9 @@ def my_chats(
 
     이어 불러오기는 before_id 를 쓴다. offset 은 조회하는 사이에 새 대화가 생기면 한 칸씩 밀리지만
     before_id 는 밀리지 않는다.
+    all=true 는 limit(최대 100)을 건너뛰고 한 번에 전부 돌려준다.
     """
+    if fetch_all:
+        # ponytail: 전부를 한 번에 메모리에 올린다. 대화가 수만 건인 사용자가 생기면 스트리밍이나 파일 내보내기로 바꾼다.
+        return list_user_chat_logs(db, user.id, limit=None, before_id=before_id)
     return list_user_chat_logs(db, user.id, limit=limit, offset=offset, before_id=before_id)

@@ -93,6 +93,19 @@ def test_my_chats_before_id_continues_with_older_logs(client):
     assert client.get("/api/me/chats", params={"before_id": 0}).status_code == 422
 
 
+def test_my_chats_all_returns_every_own_log_in_one_response(client):
+    user_id = login(client)
+    add_logs(user_id, 120, prefix="내")  # limit 의 최댓값(100)보다 많다
+    add_other_user_with_logs()
+
+    everything = client.get("/api/me/chats", params={"all": "true", "limit": 2, "offset": 5}).json()
+
+    assert len(everything) == 120  # all 이면 limit 과 offset 은 무시한다
+    assert everything[0]["question"] == "내 질문 120" and everything[-1]["question"] == "내 질문 1"
+    assert all("남의" not in item["question"] for item in everything)
+    assert len(client.get("/api/me/chats").json()) == 20  # 기본 동작은 그대로
+
+
 def test_history_page_redirects_anonymous_user_to_login(client):
     response = client.get("/history", follow_redirects=False)
 
@@ -135,6 +148,7 @@ def test_history_page_splits_all_logs_into_pages(client):
     assert "<td>내 질문 70</td>" not in first
     assert 'href="/history?page=2"' in first and "1 / 3 페이지" in first
     assert 'href="/api/me/chats?limit=50&amp;offset=0"' in first
+    assert 'href="/api/me/chats?all=true"' in first
 
     assert "전체 120건 중 101~120번째" in last
     assert "<td>내 질문 20</td>" in last and "<td>내 질문 1</td>" in last
