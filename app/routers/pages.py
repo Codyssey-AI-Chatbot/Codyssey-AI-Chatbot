@@ -18,11 +18,17 @@ from app.auth import get_current_user_or_redirect
 from app.config import settings
 from app.db import get_db
 from app.models import User
-from app.routers.logs import as_utc, list_all_chat_logs, list_user_chat_logs, list_users_with_chat_counts
+from app.routers.logs import (
+    as_utc,
+    count_user_chat_logs,
+    list_all_chat_logs,
+    list_user_chat_logs,
+    list_users_with_chat_counts,
+)
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 KST = timezone(timedelta(hours=9))  # 화면 표시용. 한국은 서머타임이 없어 고정 오프셋으로 충분하다.
-HISTORY_PAGE_SIZE = 50  # ponytail: 페이지네이션 없이 최근 50건만. 더 보려면 /api/me/chats 의 offset 을 쓴다.
+HISTORY_PAGE_SIZE = 50  # 내 대화 기록 화면의 한 페이지에 보여 줄 대화 수
 ADMIN_USERNAME = "admin"
 ADMIN_PAGE_SIZE = 100  # ponytail: 최근 100건만. 더 오래된 로그는 사용자 필터로 좁혀서 본다.
 
@@ -90,10 +96,18 @@ def chat_page(request: Request, user: User = Depends(get_current_user_or_redirec
 @router.get("/history", response_class=HTMLResponse)
 def history_page(
     request: Request,
+    page: int = 1,
     user: User = Depends(get_current_user_or_redirect),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
-    """내 대화 기록 화면. API 와 같은 조회 함수를 쓰고, 시각만 KST 문자열로 바꿔 넘긴다."""
+    """내 대화 기록 화면. API 와 같은 조회 함수를 쓰고, 시각만 KST 문자열로 바꿔 넘긴다.
+
+    ?page= 로 페이지를 넘긴다(1 이 가장 최근). 범위를 벗어난 값은 첫 페이지나 마지막 페이지로 맞춘다.
+    """
+    total = count_user_chat_logs(db, user.id)
+    last_page = max(1, (total + HISTORY_PAGE_SIZE - 1) // HISTORY_PAGE_SIZE)
+    page = min(max(page, 1), last_page)
+    offset = (page - 1) * HISTORY_PAGE_SIZE
     logs = [
         {
             "id": log.id,
@@ -101,9 +115,21 @@ def history_page(
             "answer": log.answer,
             "created_at": kst_text(log.created_at),
         }
-        for log in list_user_chat_logs(db, user.id, limit=HISTORY_PAGE_SIZE)
+        for log in list_user_chat_logs(db, user.id, limit=HISTORY_PAGE_SIZE, offset=offset)
     ]
-    return templates.TemplateResponse(request, "history.html", {"user": user, "logs": logs})
+    return templates.TemplateResponse(
+        request,
+        "history.html",
+        {
+            "user": user,
+            "logs": logs,
+            "total": total,
+            "page": page,
+            "last_page": last_page,
+            "page_size": HISTORY_PAGE_SIZE,
+            "offset": offset,
+        },
+    )
 
 
 @router.get("/admin", response_class=HTMLResponse, dependencies=[Depends(require_admin)])

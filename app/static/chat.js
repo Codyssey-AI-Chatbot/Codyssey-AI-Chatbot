@@ -5,11 +5,16 @@ const form = document.getElementById("chat-form");
 const input = document.getElementById("message");
 const sendButton = document.getElementById("send-button");
 
-function appendBubble(kind, text) {
-  messagesBox.querySelector(".messages-empty")?.remove();
+function createBubble(kind, text) {
   const bubble = document.createElement("div");
   bubble.className = `bubble bubble-${kind}`;
   bubble.textContent = text;
+  return bubble;
+}
+
+function appendBubble(kind, text) {
+  messagesBox.querySelector(".messages-empty")?.remove();
+  const bubble = createBubble(kind, text);
   messagesBox.appendChild(bubble);
   messagesBox.scrollTop = messagesBox.scrollHeight;
   return bubble;
@@ -86,15 +91,44 @@ input.addEventListener("keydown", (event) => {
   }
 });
 
-// 화면을 열면 최근 대화를 불러와 이어서 볼 수 있게 한다. (AI 가 기억하는 범위도 이 안에 있다)
-async function loadRecentHistory() {
-  const response = await fetch("/api/me/chats?limit=20").catch(() => null);
-  if (!response?.ok) return;
-  const logs = await response.json();
-  logs.reverse().forEach(({ question, answer }) => {
-    appendBubble("user", question);
-    appendBubble("assistant", answer);
-  });
+// 지난 대화를 20개씩 불러온다. 화면을 열 때 최근 20개를 보여 주고,
+// 맨 위까지 스크롤하면 그보다 오래된 20개를 위에 이어 붙인다. (AI 가 기억하는 범위는 최근 5개)
+const HISTORY_PAGE_SIZE = 20;
+let oldestLoadedId = null; // 화면에 있는 가장 오래된 대화의 id. 이보다 오래된 것을 이어서 불러온다.
+let hasOlderHistory = false;
+let loadingHistory = false;
+
+async function loadOlderHistory() {
+  if (loadingHistory) return;
+  loadingHistory = true;
+  try {
+    const isFirstLoad = oldestLoadedId === null;
+    const cursor = isFirstLoad ? "" : `&before_id=${oldestLoadedId}`;
+    const response = await fetch(`/api/me/chats?limit=${HISTORY_PAGE_SIZE}${cursor}`).catch(() => null);
+    if (!response?.ok) return;
+    const logs = await response.json(); // 최신순
+    hasOlderHistory = logs.length === HISTORY_PAGE_SIZE;
+    if (logs.length === 0) return;
+    oldestLoadedId = logs[logs.length - 1].id;
+
+    const older = document.createDocumentFragment();
+    logs.reverse().forEach(({ question, answer }) => {
+      older.append(createBubble("user", question), createBubble("assistant", answer));
+    });
+    messagesBox.querySelector(".messages-empty")?.remove();
+    const heightBefore = messagesBox.scrollHeight;
+    messagesBox.prepend(older);
+    // 처음에는 맨 아래(최신)로 가고, 이어 불러올 때는 늘어난 높이만큼 내려서 보던 위치를 유지한다.
+    messagesBox.scrollTop = isFirstLoad
+      ? messagesBox.scrollHeight
+      : messagesBox.scrollTop + messagesBox.scrollHeight - heightBefore;
+  } finally {
+    loadingHistory = false;
+  }
 }
 
-loadRecentHistory();
+messagesBox.addEventListener("scroll", () => {
+  if (hasOlderHistory && messagesBox.scrollTop < 40) loadOlderHistory();
+});
+
+loadOlderHistory();
