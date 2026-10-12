@@ -558,7 +558,7 @@ python -m pytest -q tests/test_pages.py tests/test_logs.py tests/test_admin.py  
 | [#32 관리자 로그 조회 페이지](https://github.com/Codyssey-AI-Chatbot/Codyssey-AI-Chatbot/pull/32) | [#31](https://github.com/Codyssey-AI-Chatbot/Codyssey-AI-Chatbot/issues/31) | `feature/admin-log-view` |
 | [#34 --loop asyncio 되돌리기, 재배포 방법 정정](https://github.com/Codyssey-AI-Chatbot/Codyssey-AI-Chatbot/pull/34) | [#26](https://github.com/Codyssey-AI-Chatbot/Codyssey-AI-Chatbot/issues/26) | `fix/render-manual-deploy` |
 | 릴리스 [#27](https://github.com/Codyssey-AI-Chatbot/Codyssey-AI-Chatbot/pull/27) · [#29](https://github.com/Codyssey-AI-Chatbot/Codyssey-AI-Chatbot/pull/29) · [#33](https://github.com/Codyssey-AI-Chatbot/Codyssey-AI-Chatbot/pull/33) · [#35](https://github.com/Codyssey-AI-Chatbot/Codyssey-AI-Chatbot/pull/35) | [#26](https://github.com/Codyssey-AI-Chatbot/Codyssey-AI-Chatbot/issues/26) | `develop` → `main` (배포된 커밋 `5b5751c`) |
-| (B 에게 전달) | [#20 AI\_API\_KEY 미설정 시 500](https://github.com/Codyssey-AI-Chatbot/Codyssey-AI-Chatbot/issues/20) | - |
+| (B 에게 전달, B 가 #39 에서 수정) | [#20 AI\_API\_KEY 미설정 시 500](https://github.com/Codyssey-AI-Chatbot/Codyssey-AI-Chatbot/issues/20) | - |
 
 **파일 바로가기**
 

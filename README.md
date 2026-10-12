@@ -229,6 +229,7 @@ sequenceDiagram
 | 400 | `INVALID_MESSAGE` | 빈 메시지 또는 2,000자 초과 |
 | 504 | `AI_TIMEOUT` | AI API 가 `AI_TIMEOUT_SECONDS`(기본 20초) 안에 응답하지 않음 |
 | 502 | `AI_SERVICE_ERROR` | AI API 연결 실패, 오류 상태 코드, 빈 응답 |
+| 503 | `AI_NOT_CONFIGURED` | 서버에 `AI_API_KEY` 가 설정되지 않음 (입력 검증을 통과한 요청에만) |
 | 500 | `DB_SAVE_ERROR` | 답변은 받았지만 DB 저장 실패 (롤백 후 응답) |
 | 422 | (FastAPI 기본) | 요청 본문/쿼리 형식 오류 (예: `limit=0`) |
 
@@ -415,7 +416,7 @@ uvicorn app.main:app --reload
 테스트:
 
 ```bash
-python -m pytest -q        # 54 passed
+python -m pytest -q        # 57 passed
 ```
 
 테스트는 임시 디렉터리의 별도 SQLite 파일과 가짜 AI 클라이언트를 사용하므로, 내 `.env`, `app.db`, 실제 AI API 에 영향을 주지 않습니다.
@@ -504,7 +505,7 @@ sudo systemctl status chatbot          # 로그: journalctl -u chatbot -f
 | 변수 | 필수 | 기본값 | 설명 |
 |---|---|---|---|
 | `SECRET_KEY` | **예** | 없음 (없으면 시작 실패) | 세션 쿠키 서명 키. `python -c "import secrets; print(secrets.token_urlsafe(32))"` 로 생성 |
-| `AI_API_KEY` | 채팅에 필요 | 없음 | AI API 키. 없으면 인증·화면은 동작하지만 `POST /api/chat` 은 실패 |
+| `AI_API_KEY` | 채팅에 필요 | 없음 | AI API 키. 없으면 인증·화면은 동작하지만 `POST /api/chat` 은 `503 AI_NOT_CONFIGURED` 를 돌려줌 |
 | `AI_BASE_URL` | 아니오 | `https://copa.codyssey.kr/v1` | OpenAI 호환 API 주소 |
 | `AI_MODEL` | 아니오 | `gpt-5.4` | 모델 이름 |
 | `AI_TIMEOUT_SECONDS` | 아니오 | `20` | AI 호출 제한 시간(초). 초과 시 `504 AI_TIMEOUT` |
@@ -566,6 +567,7 @@ INFO db_save_fail request_id=... user_id=1 error_type=OperationalError    # DB �
 |---|---|---|
 | AI API 가 제한 시간(기본 20초) 안에 응답하지 않음 | `AITimeoutError` 로 변환, `ai_call_fail` 기록, 저장 안 함 | `504 AI_TIMEOUT` → 채팅 화면에 "AI 응답이 지연되고 있습니다. … (error: AI_TIMEOUT)" |
 | AI API 연결 실패, 오류 상태 코드, 빈 응답 | `AIServiceError` 로 변환, `ai_call_fail` 기록 | `502 AI_SERVICE_ERROR` |
+| 서버에 `AI_API_KEY` 가 없음 | AI 호출 시점에 `AIConfigurationError`, `ai_call_fail` 기록, 저장 안 함 | `503 AI_NOT_CONFIGURED` |
 | 답변은 받았지만 DB 저장 실패 | 롤백, `db_save_fail` 기록. 다음 요청은 정상 처리 | `500 DB_SAVE_ERROR` |
 | 비로그인 호출 | `AuthError` → JSON | `401 UNAUTHORIZED`. 화면은 `/login` 으로 이동 |
 | 공급자 내부 오류 메시지, 스택 트레이스 | 응답에 포함하지 않음 | 일관된 `{"error", "message"}` 만 |
@@ -659,12 +661,13 @@ Render 무료 플랜은 Shell 접속을 지원하지 않으므로, 배포된 서
 - **PR #5 `feature/auth-signup-login`** (4 커밋): 세션 비밀키 설정, argon2 비밀번호 해싱과 `get_current_user`/`get_current_user_or_redirect` 의존성, 회원가입·로그인·로그아웃·내 정보 API 와 입력 검증, 세션 미들웨어와 `AuthError` 핸들러. (계획상 PR3 "접근 제어" 는 이 PR 에 함께 포함)
 - **PR #6 `feature/auth-tests`** (2 커밋): pytest 설정과 공용 `client` 픽스처(임시 DB), 인증 API 테스트 16개.
 
-### B — @Wattamelon (AI 챗봇 파이프라인) · 14 커밋 · PR 4개
+### B — @Wattamelon (AI 챗봇 파이프라인) · 15 커밋 · PR 5개
 
 - **PR #8 `feature/ai-client`** (4 커밋): 공급자 독립 `AIClient` 인터페이스, `AI_*` 환경 설정, OpenAI 호환 비동기 클라이언트, 타임아웃과 `AITimeoutError`/`AIServiceError` 변환.
 - **PR #10 `feature/chat-api`** (4 커밋): 인증된 `POST /api/chat`, 빈 입력·2,000자 검증, 성공한 대화만 DB 저장, 테스트.
 - **PR #12 `feature/context-strategy`** (3 커밋): 사용자별 최근 5개 대화 조회, 컨텍스트를 AI 요청에 연결, 컨텍스트 격리·순서 테스트.
 - **PR #14 `feature/logging-errors`** (3 커밋): `request_id` 기반 이벤트 로그(`request_received`, `ai_call_*`, `db_save_*`, `latency_ms`), 타임아웃 504·AI 실패 502·DB 실패 500 응답과 롤백, 민감정보 비노출 테스트.
+- **PR #39 `feature/ai-config-error`** (1 커밋): `AI_API_KEY` 가 없으면 입력 검증보다 먼저 `500` 이 나던 문제(이슈 #20) 수정. 설정 누락을 AI 호출 시점에 `AIConfigurationError` 로 알리고 `503 AI_NOT_CONFIGURED` 로 응답, 테스트 3개.
 
 ### C — @ADOHI (UI·로그 조회·배포·문서) · 37 커밋 · 기능 PR 12개, 릴리스 PR
 
@@ -702,7 +705,7 @@ docs/<내용>            ← 문서 작업 브랜치
 - 모든 변경은 PR 로만 `develop` 에 들어갑니다. 직접 push 하지 않습니다.
 - PR 은 [템플릿](.github/pull_request_template.md)에 따라 작업 요약, 관련 요구사항, 변경 사항, 테스트 방법, 체크리스트를 적고, 해당 이슈를 `Closes #n` 으로 연결합니다.
 - 본인이 아닌 팀원 1명이 리뷰·승인한 뒤 머지합니다. **squash 를 쓰지 않고 머지 커밋**을 남겨 개별 커밋 이력이 보존되게 합니다.
-- 각자 소유 파일만 수정합니다. 다른 사람 파일을 고쳐야 하면 PR 에 이유를 적거나 이슈로 요청합니다. (예: C 가 발견한 B 영역 문제는 이슈 #20 으로 전달)
+- 각자 소유 파일만 수정합니다. 다른 사람 파일을 고쳐야 하면 PR 에 이유를 적거나 이슈로 요청합니다. (예: C 가 발견한 B 영역 문제는 이슈 #20 으로 전달했고, B 가 #39 에서 수정)
 
 ### 커밋 규칙
 
@@ -719,13 +722,13 @@ docs/<내용>            ← 문서 작업 브랜치
 ## 13. 테스트
 
 ```bash
-python -m pytest -q        # 54 passed
+python -m pytest -q        # 57 passed
 ```
 
 | 파일 | 개수 | 확인하는 것 | 작성 |
 |---|---|---|---|
 | `tests/test_auth.py` | 16 | 가입(해시 저장, 중복, 아이디/비밀번호 검증), 로그인(실패 시 정보 비노출), 로그아웃, 삭제된 사용자 세션 거부, 화면용 의존성의 리다이렉트 | A |
-| `tests/test_chat.py` | 13 | 로그인 필요, 빈 입력·2,000자 검증, 저장, AI 실패 시 미저장, 최근 5개 컨텍스트와 사용자 격리, 타임아웃 504·실패 502·DB 실패 500, 로그 이벤트와 `request_id`, 민감정보 비노출 | B |
+| `tests/test_chat.py` | 16 | 로그인 필요, 빈 입력·2,000자 검증, 저장, AI 실패 시 미저장, 최근 5개 컨텍스트와 사용자 격리, 타임아웃 504·실패 502·DB 실패 500, AI 키 미설정 시 503 과 입력 검증 우선, 로그 이벤트와 `request_id`, 민감정보 비노출 | B |
 | `tests/test_pages.py` | 7 | `/` 리다이렉트, 가입·로그인 페이지 렌더링, 정적 파일, `/chat` 접근 제어 | C |
 | `tests/test_logs.py` | 8 | `/api/me/chats` 로그인 필요·본인 로그만·정렬·limit/offset·범위 검증, `/history` 접근 제어·KST 표시·빈 상태, `check_logs.sql` 실행 결과 | C |
 | `tests/test_admin.py` | 10 | `/admin` 비밀번호 미설정 시 404, 미인증·틀린 인증 401, 일반 로그인으로는 접근 불가, 전체 사용자·로그 표시와 최신순, 해시 원문 비노출, 사용자 필터, 빈 상태 | C |
