@@ -6,8 +6,10 @@
   <div class="history-head">
     <h1>내 대화 기록</h1>
     <p class="muted">
-      최근 {{ logs|length }}건, 시각은 한국 표준시(KST) 기준입니다.
-      JSON 으로 보려면 <a href="/api/me/chats" target="_blank" rel="noopener">GET /api/me/chats</a>
+      {% if logs %}전체 {{ total }}건 중 {{ offset + 1 }}~{{ offset + logs|length }}번째 (최신순),{% else %}전체 0건,{% endif %}
+      시각은 한국 표준시(KST) 기준입니다.
+      이 페이지를 JSON 으로 보려면
+      <a href="/api/me/chats?limit={{ page_size }}&amp;offset={{ offset }}" target="_blank" rel="noopener">GET /api/me/chats?limit={{ page_size }}&amp;offset={{ offset }}</a>
     </p>
   </div>
 
@@ -27,6 +29,14 @@
       {% endfor %}
     </tbody>
   </table>
+
+  {% if last_page > 1 %}
+  <nav class="pager" aria-label="대화 기록 페이지 이동">
+    {% if page > 1 %}<a href="/history?page={{ page - 1 }}" rel="prev">← 더 최근</a>{% else %}<span class="pager-disabled">← 더 최근</span>{% endif %}
+    <span>{{ page }} / {{ last_page }} 페이지</span>
+    {% if page < last_page %}<a href="/history?page={{ page + 1 }}" rel="next">더 오래된 →</a>{% else %}<span class="pager-disabled">더 오래된 →</span>{% endif %}
+  </nav>
+  {% endif %}
   {% else %}
   <p class="messages-empty">아직 대화가 없습니다. <a href="/chat">채팅</a>에서 첫 질문을 해보세요.</p>
   {% endif %}
