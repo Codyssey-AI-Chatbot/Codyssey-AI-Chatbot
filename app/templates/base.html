@@ -26,15 +26,7 @@
     {% block content %}{% endblock %}
   </main>
 
-  {% if user %}
-  <script>
-    // 로그아웃은 A의 POST /api/auth/logout 을 호출한 뒤 로그인 페이지로 이동한다.
-    document.getElementById("logout-button").addEventListener("click", async () => {
-      await fetch("/api/auth/logout", { method: "POST" });
-      window.location.assign("/login");
-    });
-  </script>
-  {% endif %}
+  {% if user %}<script src="/static/logout.js"></script>{% endif %}
   {% block scripts %}{% endblock %}
 </body>
 </html>
