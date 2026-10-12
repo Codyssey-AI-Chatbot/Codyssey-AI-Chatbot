@@ -2,6 +2,8 @@
 
 작성 @ADOHI (Claude Code 사용) · 2026-10-12
 
+> **2026-10-12 추가**: 이 문서를 쓴 뒤 B 가 [#39](https://github.com/Codyssey-AI-Chatbot/Codyssey-AI-Chatbot/pull/39) 에서 AI 키 미설정 오류(이슈 #20)를 고쳤습니다. 아래 코드 링크와 수치는 그 전 커밋 기준이고, 달라진 내용은 4-5 (3)과 "알려진 한계"에 적었습니다.
+>
 > 과제 문서의 **4. 기능 요구 사항**과 **6. 제약 사항**을 항목별로 나누어, 어느 코드가 그 항목을 만족하는지 설명하는 문서입니다. 코드 링크는 커밋 `df6226b`(2026-10-12 의 `develop`)에 고정한 주소라, 이후 코드가 바뀌어도 같은 줄이 열립니다. 커밋·PR·테스트 수도 이 커밋 기준이며, 이 문서를 추가한 PR 은 세지 않았습니다. 요구사항 문구는 과제 문서의 내용을 짧게 줄여 옮겼습니다.
 
 ## 읽는 법
@@ -587,6 +589,7 @@ def error_response(status_code: int, code: str, message: str) -> JSONResponse:
 | AI 서비스 오류 | `502` | `AI_SERVICE_ERROR` |
 | AI 타임아웃 | `504` | `AI_TIMEOUT` |
 | DB 저장 실패 | `500` | `DB_SAVE_ERROR` |
+| 서버에 AI 키 미설정 (기준 커밋 이후 #39 에서 추가) | `503` | `AI_NOT_CONFIGURED` |
 
 채팅 화면은 이 응답을 받아 오류 말풍선에 안내 문구와 코드를 함께 보여 줍니다. 서버에 아예 닿지 못한 경우도 따로 안내합니다.
 
@@ -963,7 +966,7 @@ client = AsyncOpenAI(
 
 | 한계 | 내용 | 관련 항목 |
 |---|---|---|
-| API 키가 없는 서버에서의 채팅 오류 | `AI_API_KEY` 가 설정되지 않으면 입력 검증보다 먼저 `500` 이 납니다. B 의 영역이라 고치지 않고 [이슈 #20](https://github.com/Codyssey-AI-Chatbot/Codyssey-AI-Chatbot/issues/20) 으로 전달했고, 아직 열려 있습니다. 키가 설정된 배포 서버에서는 일어나지 않습니다 | 4-5 (4) |
+| API 키가 없는 서버에서의 채팅 오류 (**해결됨**) | `AI_API_KEY` 가 설정되지 않으면 입력 검증보다 먼저 `500` 이 나던 문제입니다. C 가 [이슈 #20](https://github.com/Codyssey-AI-Chatbot/Codyssey-AI-Chatbot/issues/20) 으로 전달했고, B 가 2026-10-12 에 [#39](https://github.com/Codyssey-AI-Chatbot/Codyssey-AI-Chatbot/pull/39) 에서 고쳤습니다. 지금은 입력 검증을 먼저 하고, 키가 없으면 `503 AI_NOT_CONFIGURED` 안내를 돌려줍니다 | 4-5 (3), (4) |
 | 자바스크립트 자동 테스트 없음 | 테스트는 서버 응답만 검증합니다. 화면 동작은 브라우저에서 직접 확인했습니다 | 4-1 (2), 4-5 (3) |
 | PR 승인 기록 없음 | 규칙은 승인 후 머지였지만 GitHub 승인 기록은 남지 않았습니다 | 4-7 (3) |
 | 배포 서버의 데이터 유지 | Render 무료 플랜은 서버가 잠들거나 다시 배포되면 SQLite 파일이 사라집니다 | 4-4 (1), 4-6 (1) |
