@@ -39,16 +39,21 @@ class ChatLogOut(BaseModel):
         return as_utc(value)
 
 
-def list_user_chat_logs(db: Session, user_id: int, *, limit: int, offset: int = 0) -> list[ChatLog]:
-    """사용자 한 명의 대화 로그를 최신순으로 반환한다."""
-    statement = (
-        select(ChatLog)
-        .where(ChatLog.user_id == user_id)
-        .order_by(ChatLog.created_at.desc(), ChatLog.id.desc())
-        .limit(limit)
-        .offset(offset)
-    )
+def list_user_chat_logs(
+    db: Session, user_id: int, *, limit: int, offset: int = 0, before_id: int | None = None
+) -> list[ChatLog]:
+    """사용자 한 명의 대화 로그를 최신순으로 반환한다. before_id 를 주면 그보다 오래된 로그만."""
+    statement = select(ChatLog).where(ChatLog.user_id == user_id)
+    if before_id is not None:
+        # 로그는 현재 시각으로 추가만 되므로 id 가 작을수록 오래된 대화다.
+        statement = statement.where(ChatLog.id < before_id)
+    statement = statement.order_by(ChatLog.created_at.desc(), ChatLog.id.desc()).limit(limit).offset(offset)
     return list(db.scalars(statement))
+
+
+def count_user_chat_logs(db: Session, user_id: int) -> int:
+    """사용자 한 명의 전체 대화 수. 화면의 페이지 나누기에 쓴다."""
+    return db.scalar(select(func.count()).select_from(ChatLog).where(ChatLog.user_id == user_id)) or 0
 
 
 def list_all_chat_logs(db: Session, *, limit: int, user_id: int | None = None) -> list[tuple[ChatLog, str]]:
@@ -79,8 +84,13 @@ def list_users_with_chat_counts(db: Session) -> list[tuple[User, int]]:
 def my_chats(
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT, description="가져올 개수"),
     offset: int = Query(0, ge=0, description="건너뛸 개수 (페이지 이동용)"),
+    before_id: int | None = Query(None, ge=1, description="이 id 보다 오래된 로그만 (이어 불러오기용)"),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[ChatLog]:
-    """내 대화 로그 조회. 다른 사용자의 로그는 user_id 조건으로 조회되지 않는다."""
-    return list_user_chat_logs(db, user.id, limit=limit, offset=offset)
+    """내 대화 로그 조회. 다른 사용자의 로그는 user_id 조건으로 조회되지 않는다.
+
+    이어 불러오기는 before_id 를 쓴다. offset 은 조회하는 사이에 새 대화가 생기면 한 칸씩 밀리지만
+    before_id 는 밀리지 않는다.
+    """
+    return list_user_chat_logs(db, user.id, limit=limit, offset=offset, before_id=before_id)

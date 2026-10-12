@@ -293,7 +293,9 @@ HTTP 504  { "error": "AI_TIMEOUT",       "message": "AI 응답이 지연되고 �
 HTTP 502  { "error": "AI_SERVICE_ERROR", "message": "AI 서비스에 일시적인 문제가 발생했습니다. 잠시 후 다시 시도해 주세요." }
 ```
 
-**내 대화 로그 조회** — `limit`(1~100, 기본 20), `offset`(기본 0), 최신순. 다른 사용자의 로그는 조회되지 않습니다.
+**내 대화 로그 조회** — `limit`(1~100, 기본 20), `offset`(기본 0), `before_id`(선택), 최신순. 다른 사용자의 로그는 조회되지 않습니다.
+
+한 번에 최대 100건이므로 전체를 보려면 `offset` 을 100씩 늘려 가며 호출합니다(`offset=0`, `100`, `200` …). 100건보다 적게 오면 끝입니다. `before_id` 를 주면 그 id 보다 오래된 로그만 돌려줍니다. 채팅 화면이 이전 대화를 이어 불러올 때 씁니다.
 
 ```bash
 curl -b cookies.txt "http://127.0.0.1:8000/api/me/chats?limit=2&offset=0"
@@ -417,7 +419,7 @@ uvicorn app.main:app --reload
 테스트:
 
 ```bash
-python -m pytest -q        # 57 passed
+python -m pytest -q        # 59 passed
 ```
 
 테스트는 임시 디렉터리의 별도 SQLite 파일과 가짜 AI 클라이언트를 사용하므로, 내 `.env`, `app.db`, 실제 AI API 에 영향을 주지 않습니다.
@@ -582,7 +584,7 @@ INFO db_save_fail request_id=... user_id=1 error_type=OperationalError    # DB �
 | 아이디 | 영문·숫자·밑줄, 3~30자 | `400 INVALID_USERNAME` |
 | 비밀번호 | 8~128자 | `400 INVALID_PASSWORD` |
 | 채팅 메시지 | 공백만 있는 입력 거부, 2,000자 이하 | `400 INVALID_MESSAGE` (화면에서도 `maxlength=2000` 과 빈 입력 차단) |
-| 로그 조회 `limit` / `offset` | 1~100 / 0 이상 | `422` |
+| 로그 조회 `limit` / `offset` / `before_id` | 1~100 / 0 이상 / 1 이상 | `422` |
 
 ---
 
@@ -604,7 +606,7 @@ curl -b cookies.txt "http://127.0.0.1:8000/api/me/chats?limit=5"
 
 ### 방법 2. 내 대화 기록 화면
 
-로그인 후 상단 바의 **내 대화 기록** 또는 `/history` 로 들어가면 최근 50건이 표(시각 KST, 질문, 답변)로 보입니다. 다른 계정으로 로그인하면 그 계정의 기록만 보여 **사용자 기준 분리**를 바로 확인할 수 있습니다.
+로그인 후 상단 바의 **내 대화 기록** 또는 `/history` 로 들어가면 대화가 50건씩 표(시각 KST, 질문, 답변)로 보이고, 아래의 이동 링크로 첫 대화까지 넘겨 볼 수 있습니다. 채팅 화면에서는 대화 영역을 맨 위까지 스크롤하면 이전 대화가 20개씩 이어서 나타납니다. 다른 계정으로 로그인하면 그 계정의 기록만 보여 **사용자 기준 분리**를 바로 확인할 수 있습니다.
 
 ### 방법 3. 확인용 SQL 스크립트 (운영자, 모든 사용자)
 
@@ -670,7 +672,7 @@ Render 무료 플랜은 Shell 접속을 지원하지 않으므로, 배포된 서
 - **PR #14 `feature/logging-errors`** (3 커밋): `request_id` 기반 이벤트 로그(`request_received`, `ai_call_*`, `db_save_*`, `latency_ms`), 타임아웃 504·AI 실패 502·DB 실패 500 응답과 롤백, 민감정보 비노출 테스트.
 - **PR #39 `feature/ai-config-error`** (1 커밋): `AI_API_KEY` 가 없으면 입력 검증보다 먼저 `500` 이 나던 문제(이슈 #20) 수정. 설정 누락을 AI 호출 시점에 `AIConfigurationError` 로 알리고 `503 AI_NOT_CONFIGURED` 로 응답, 테스트 3개.
 
-### C — @ADOHI (UI·로그 조회·배포·문서) · 44 커밋 · 기능 PR 15개, 릴리스 PR
+### C — @ADOHI (UI·로그 조회·배포·문서) · 49 커밋 · 기능 PR 16개, 릴리스 PR
 
 - **PR #21 `feature/base-ui`** (4 커밋): 공통 레이아웃 템플릿과 CSS, 회원가입 페이지, 로그인 페이지(`auth.js` 로 API 호출과 오류 표시), 페이지 라우트 테스트.
 - **PR #22 `feature/chat-ui`** (3 커밋): 로그인 보호된 `/chat` 페이지 마크업, `chat.js`(fetch 로 질문 전송·말풍선 표시), 로딩 표시·입력 잠금·에러 코드 말풍선·세션 만료 처리.
@@ -687,6 +689,7 @@ Render 무료 플랜은 Shell 접속을 지원하지 않으므로, 배포된 서
 - **PR #41 `docs/sync-ai-config-error`** (2 커밋): B 의 #39 를 문서에 반영. README 의 오류 코드·예외 처리 표와 테스트 수(57개), B 의 작업 요약, 발표 문서의 이슈 #20 상태 갱신.
 - **PR #42 `docs/release-pr-list`** (2 커밋): 릴리스 PR 을 번호로 나열하던 것을 GitHub 목록 링크로 바꿈. 릴리스할 때마다 README 가 어긋나지 않게 하려는 것.
 - **PR #44 `docs/scaling-improvements`** (3 커밋): 동시 접속이 몰릴 때의 병목 분석과 개선안 5가지를 정리한 제안 문서 `docs/scaling-improvements.md` 추가. 코드는 바꾸지 않고, 저장소 밖의 사본에서 수정 전후를 실험한 결과를 실음.
+- **PR #47 `feature/history-paging`** (5 커밋): 지난 대화를 끝까지 볼 수 있게 함. 채팅 화면은 위로 스크롤하면 이전 대화를 20개씩 이어 불러오고, `/history` 는 50건씩 페이지로 나눔. `GET /api/me/chats` 에 `before_id` 추가, 테스트 2개.
 - **릴리스 PR** (`develop` → `main`, 커밋 없이 머지 커밋만): #27 첫 릴리스부터 배포할 때마다 하나씩 만들었습니다. [전체 목록](https://github.com/Codyssey-AI-Chatbot/Codyssey-AI-Chatbot/pulls?q=is%3Apr+is%3Amerged+base%3Amain)
 
 배포 단계의 PR(#27 이후)은 팀원 리뷰를 받기 어려운 일정이라 작성자가 검증 후 직접 머지했고, 사유를 각 PR 본문의 "머지 메모"에 남겼습니다.
@@ -726,7 +729,7 @@ docs/<내용>            ← 문서 작업 브랜치
 ## 13. 테스트
 
 ```bash
-python -m pytest -q        # 57 passed
+python -m pytest -q        # 59 passed
 ```
 
 | 파일 | 개수 | 확인하는 것 | 작성 |
@@ -734,7 +737,7 @@ python -m pytest -q        # 57 passed
 | `tests/test_auth.py` | 16 | 가입(해시 저장, 중복, 아이디/비밀번호 검증), 로그인(실패 시 정보 비노출), 로그아웃, 삭제된 사용자 세션 거부, 화면용 의존성의 리다이렉트 | A |
 | `tests/test_chat.py` | 16 | 로그인 필요, 빈 입력·2,000자 검증, 저장, AI 실패 시 미저장, 최근 5개 컨텍스트와 사용자 격리, 타임아웃 504·실패 502·DB 실패 500, AI 키 미설정 시 503 과 입력 검증 우선, 로그 이벤트와 `request_id`, 민감정보 비노출 | B |
 | `tests/test_pages.py` | 7 | `/` 리다이렉트, 가입·로그인 페이지 렌더링, 정적 파일, `/chat` 접근 제어 | C |
-| `tests/test_logs.py` | 8 | `/api/me/chats` 로그인 필요·본인 로그만·정렬·limit/offset·범위 검증, `/history` 접근 제어·KST 표시·빈 상태, `check_logs.sql` 실행 결과 | C |
+| `tests/test_logs.py` | 10 | `/api/me/chats` 로그인 필요·본인 로그만·정렬·limit/offset·범위 검증·`before_id` 이어 불러오기, `/history` 접근 제어·KST 표시·빈 상태·페이지 나누기, `check_logs.sql` 실행 결과 | C |
 | `tests/test_admin.py` | 10 | `/admin` 비밀번호 미설정 시 404, 미인증·틀린 인증 401, 일반 로그인으로는 접근 불가, 전체 사용자·로그 표시와 최신순, 해시 원문 비노출, 사용자 필터, 빈 상태 | C |
 
 - `tests/conftest.py` 가 앱 import 전에 `SECRET_KEY` 와 임시 `DATABASE_URL` 을 환경 변수로 지정해 개발자의 `.env` 와 `app.db` 를 건드리지 않습니다.

@@ -80,6 +80,19 @@ def test_my_chats_rejects_out_of_range_limit(client):
     assert client.get("/api/me/chats", params={"limit": 101}).status_code == 422
 
 
+def test_my_chats_before_id_continues_with_older_logs(client):
+    user_id = login(client)
+    add_logs(user_id, 5, prefix="내")
+
+    first = client.get("/api/me/chats", params={"limit": 2}).json()
+    add_logs(user_id, 1, prefix="새")  # 조회하는 사이에 새 대화가 생겨도 이어 불러오기는 밀리지 않는다
+    older = client.get("/api/me/chats", params={"limit": 2, "before_id": first[-1]["id"]}).json()
+
+    assert [item["question"] for item in first] == ["내 질문 5", "내 질문 4"]
+    assert [item["question"] for item in older] == ["내 질문 3", "내 질문 2"]
+    assert client.get("/api/me/chats", params={"before_id": 0}).status_code == 422
+
+
 def test_history_page_redirects_anonymous_user_to_login(client):
     response = client.get("/history", follow_redirects=False)
 
@@ -107,6 +120,30 @@ def test_history_page_shows_empty_state(client):
 
     assert response.status_code == 200
     assert "아직 대화가 없습니다" in response.text
+    assert 'class="pager"' not in response.text
+
+
+def test_history_page_splits_all_logs_into_pages(client):
+    user_id = login(client)
+    add_logs(user_id, 120, prefix="내")  # 50건씩 3페이지: 120~71, 70~21, 20~1
+
+    first = client.get("/history").text
+    last = client.get("/history", params={"page": 3}).text
+
+    assert "전체 120건 중 1~50번째" in first
+    assert "<td>내 질문 120</td>" in first and "<td>내 질문 71</td>" in first
+    assert "<td>내 질문 70</td>" not in first
+    assert 'href="/history?page=2"' in first and "1 / 3 페이지" in first
+    assert 'href="/api/me/chats?limit=50&amp;offset=0"' in first
+
+    assert "전체 120건 중 101~120번째" in last
+    assert "<td>내 질문 20</td>" in last and "<td>내 질문 1</td>" in last
+    assert "<td>내 질문 21</td>" not in last
+    assert 'href="/history?page=2"' in last and 'href="/history?page=4"' not in last
+
+    # 범위를 벗어난 페이지 번호는 첫 페이지와 마지막 페이지로 맞춘다.
+    assert "1 / 3 페이지" in client.get("/history", params={"page": 0}).text
+    assert "3 / 3 페이지" in client.get("/history", params={"page": 99}).text
 
 
 def test_check_logs_sql_lists_recent_logs_with_username(client):
