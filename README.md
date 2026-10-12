@@ -6,7 +6,7 @@
 - **Render 대시보드**: [codyssey-ai-chatbot 서비스](https://dashboard.render.com/web/srv-db4teg5ckfvc7386rcug) — 왼쪽 메뉴의 Logs(서버 로그), Events(배포 이력), Environment(환경 변수). Render 계정 권한이 있는 팀원만 열 수 있습니다
 - **저장소**: https://github.com/Codyssey-AI-Chatbot/Codyssey-AI-Chatbot
 - **기술 스택**: Python 3.10, FastAPI, SQLAlchemy 2, SQLite, Jinja2, OpenAI Python SDK(OpenAI 호환 API), pytest
-- **발표 준비 문서**: [요구사항·제약 사항 대응 설명서](docs/requirements-mapping.md) · [퍼실 문답 예상 Q&A](docs/facilitator-qna.md) · [C 역할 작업 설명서](docs/role-c-walkthrough.md) · [팀 역할 분담과 협업 규칙](docs/team-roles.md)
+- **발표 준비 문서**: [요구사항·제약 사항 대응 설명서](docs/requirements-mapping.md) · [동시 접속·장애 대비 개선안](docs/scaling-improvements.md) · [퍼실 문답 예상 Q&A](docs/facilitator-qna.md) · [C 역할 작업 설명서](docs/role-c-walkthrough.md) · [팀 역할 분담과 협업 규칙](docs/team-roles.md)
 
 ## 목차
 
@@ -180,6 +180,7 @@ sequenceDiagram
 ├── docs/
 │   ├── team-roles.md            # 역할 분담과 협업 규칙
 │   ├── requirements-mapping.md  # 요구사항·제약 사항 대응 설명서 (코드 링크 포함)
+│   ├── scaling-improvements.md  # 동시 접속·장애 대비 개선안 (제안, 코드 미변경)
 │   ├── facilitator-qna.md       # 퍼실 문답 예상 Q&A
 │   └── role-c-walkthrough.md    # C 역할 작업 설명서 (코드 링크 포함)
 ├── .github/pull_request_template.md
@@ -669,7 +670,7 @@ Render 무료 플랜은 Shell 접속을 지원하지 않으므로, 배포된 서
 - **PR #14 `feature/logging-errors`** (3 커밋): `request_id` 기반 이벤트 로그(`request_received`, `ai_call_*`, `db_save_*`, `latency_ms`), 타임아웃 504·AI 실패 502·DB 실패 500 응답과 롤백, 민감정보 비노출 테스트.
 - **PR #39 `feature/ai-config-error`** (1 커밋): `AI_API_KEY` 가 없으면 입력 검증보다 먼저 `500` 이 나던 문제(이슈 #20) 수정. 설정 누락을 AI 호출 시점에 `AIConfigurationError` 로 알리고 `503 AI_NOT_CONFIGURED` 로 응답, 테스트 3개.
 
-### C — @ADOHI (UI·로그 조회·배포·문서) · 41 커밋 · 기능 PR 14개, 릴리스 PR
+### C — @ADOHI (UI·로그 조회·배포·문서) · 44 커밋 · 기능 PR 15개, 릴리스 PR
 
 - **PR #21 `feature/base-ui`** (4 커밋): 공통 레이아웃 템플릿과 CSS, 회원가입 페이지, 로그인 페이지(`auth.js` 로 API 호출과 오류 표시), 페이지 라우트 테스트.
 - **PR #22 `feature/chat-ui`** (3 커밋): 로그인 보호된 `/chat` 페이지 마크업, `chat.js`(fetch 로 질문 전송·말풍선 표시), 로딩 표시·입력 잠금·에러 코드 말풍선·세션 만료 처리.
@@ -685,6 +686,7 @@ Render 무료 플랜은 Shell 접속을 지원하지 않으므로, 배포된 서
 - **PR #38 `docs/requirements-mapping`** (3 커밋): 과제 문서 4장·6장의 요구 항목마다 구현 코드 링크와 검증 테스트를 정리한 `docs/requirements-mapping.md` 추가, 작업 설명서의 인용 오타 수정, README 반영.
 - **PR #41 `docs/sync-ai-config-error`** (2 커밋): B 의 #39 를 문서에 반영. README 의 오류 코드·예외 처리 표와 테스트 수(57개), B 의 작업 요약, 발표 문서의 이슈 #20 상태 갱신.
 - **PR #42 `docs/release-pr-list`** (2 커밋): 릴리스 PR 을 번호로 나열하던 것을 GitHub 목록 링크로 바꿈. 릴리스할 때마다 README 가 어긋나지 않게 하려는 것.
+- **PR #44 `docs/scaling-improvements`** (3 커밋): 동시 접속이 몰릴 때의 병목 분석과 개선안 5가지를 정리한 제안 문서 `docs/scaling-improvements.md` 추가. 코드는 바꾸지 않고, 저장소 밖의 사본에서 수정 전후를 실험한 결과를 실음.
 - **릴리스 PR** (`develop` → `main`, 커밋 없이 머지 커밋만): #27 첫 릴리스부터 배포할 때마다 하나씩 만들었습니다. [전체 목록](https://github.com/Codyssey-AI-Chatbot/Codyssey-AI-Chatbot/pulls?q=is%3Apr+is%3Amerged+base%3Amain)
 
 배포 단계의 PR(#27 이후)은 팀원 리뷰를 받기 어려운 일정이라 작성자가 검증 후 직접 머지했고, 사유를 각 PR 본문의 "머지 메모"에 남겼습니다.
