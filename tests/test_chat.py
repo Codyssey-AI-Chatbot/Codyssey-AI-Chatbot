@@ -6,9 +6,11 @@ import logging
 import re
 
 import pytest
+from pydantic import SecretStr
 from sqlalchemy import select
 
 from app.ai_client import ChatMessage, get_ai_client
+from app.config import settings
 from app.db import SessionLocal, get_db
 from app.errors import AIServiceError, AITimeoutError
 from app.main import app
@@ -63,6 +65,18 @@ def fake_ai() -> FakeAIClient:
         yield client
     finally:
         app.dependency_overrides.pop(get_ai_client, None)
+
+
+@pytest.fixture()
+def missing_ai_key(monkeypatch):
+    """실제 환경 파일을 건드리지 않고 AI 키 미설정 상태를 격리한다."""
+
+    monkeypatch.setattr(settings, "ai_api_key", SecretStr(""))
+    get_ai_client.cache_clear()
+    try:
+        yield
+    finally:
+        get_ai_client.cache_clear()
 
 
 def signup_and_login(client) -> int:
@@ -167,6 +181,59 @@ def test_chat_rejects_more_than_2000_characters_before_ai_call(client, fake_ai):
     assert response.json()["error"] == "INVALID_MESSAGE"
     assert fake_ai.calls == []
     assert load_chat_logs() == []
+
+
+def test_chat_missing_ai_key_still_rejects_blank_message(client, missing_ai_key):
+    signup_and_login(client)
+
+    response = client.post("/api/chat", json={"message": " \t\n"})
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "error": "INVALID_MESSAGE",
+        "message": "메시지를 입력해 주세요.",
+    }
+    assert load_chat_logs() == []
+
+
+def test_chat_missing_ai_key_still_rejects_long_message(client, missing_ai_key):
+    signup_and_login(client)
+
+    response = client.post("/api/chat", json={"message": "가" * 2_001})
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "INVALID_MESSAGE"
+    assert load_chat_logs() == []
+
+
+def test_chat_missing_ai_key_returns_503_without_sensitive_details(
+    client,
+    missing_ai_key,
+    caplog,
+):
+    signup_and_login(client)
+    caplog.set_level(logging.INFO, logger="app.chat")
+
+    response = client.post("/api/chat", json={"message": "정상 길이 질문"})
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "error": "AI_NOT_CONFIGURED",
+        "message": "현재 AI 서비스를 사용할 수 없습니다. 관리자에게 문의해 주세요.",
+    }
+    assert "AI_API_KEY" not in response.text
+    assert "AI client is not configured" not in response.text
+    assert load_chat_logs() == []
+
+    messages = chat_event_messages(caplog)
+    assert_events_share_request_id(
+        messages,
+        ["request_received", "ai_call_start", "ai_call_fail"],
+    )
+    log_text = "\n".join(messages)
+    assert "AI_API_KEY" not in log_text
+    assert "AI client is not configured" not in log_text
+    assert "error_type=AIConfigurationError" in log_text
 
 
 def test_chat_success_returns_answer_and_saves_current_user(client, fake_ai):

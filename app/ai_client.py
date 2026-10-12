@@ -19,7 +19,7 @@ from openai import (
 )
 
 from app.config import settings
-from app.errors import AIServiceError, AITimeoutError
+from app.errors import AIConfigurationError, AIServiceError, AITimeoutError
 
 
 ChatRole = Literal["system", "user", "assistant"]
@@ -39,6 +39,13 @@ class AIClient(Protocol):
     async def complete(self, messages: Sequence[ChatMessage]) -> str:
         """대화 메시지를 받아 생성된 텍스트 답변을 반환한다."""
         ...
+
+
+class UnavailableAIClient:
+    """설정 누락을 실제 AI 호출 시점에 알리는 클라이언트."""
+
+    async def complete(self, messages: Sequence[ChatMessage]) -> str:
+        raise AIConfigurationError("AI client is not configured")
 
 
 class OpenAIChatClient:
@@ -84,7 +91,7 @@ def get_ai_client() -> AIClient:
 
     api_key = settings.ai_api_key
     if api_key is None or not api_key.get_secret_value():
-        raise RuntimeError("AI_API_KEY is not configured")
+        return UnavailableAIClient()
 
     client = AsyncOpenAI(
         api_key=api_key.get_secret_value(),
