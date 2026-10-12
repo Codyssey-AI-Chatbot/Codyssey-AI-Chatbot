@@ -9,7 +9,8 @@
       {% if logs %}전체 {{ total }}건 중 {{ offset + 1 }}~{{ offset + logs|length }}번째 (최신순),{% else %}전체 0건,{% endif %}
       시각은 한국 표준시(KST) 기준입니다.
       이 페이지를 JSON 으로 보려면
-      <a href="/api/me/chats?limit={{ page_size }}&amp;offset={{ offset }}" target="_blank" rel="noopener">GET /api/me/chats?limit={{ page_size }}&amp;offset={{ offset }}</a>
+      <a href="/api/me/chats?limit={{ page_size }}&amp;offset={{ offset }}" target="_blank" rel="noopener">GET /api/me/chats?limit={{ page_size }}&amp;offset={{ offset }}</a>,
+      전체는 <a href="/api/me/chats?all=true" target="_blank" rel="noopener">GET /api/me/chats?all=true</a>
     </p>
   </div>
 
