@@ -12,7 +12,7 @@ from app.ai_client import AIClient, get_ai_client
 from app.auth import get_current_user
 from app.context import build_chat_messages, get_recent_chat_logs
 from app.db import get_db
-from app.errors import AIServiceError, AITimeoutError
+from app.errors import AIConfigurationError, AIServiceError, AITimeoutError
 from app.logging_conf import log_chat_event
 from app.models import ChatLog, User
 
@@ -85,6 +85,18 @@ async def create_chat(
     )
     try:
         answer = await ai_client.complete(messages)
+    except AIConfigurationError as exc:
+        log_chat_event(
+            "ai_call_fail",
+            request_id=request_id,
+            user_id=user.id,
+            error_type=type(exc).__name__,
+        )
+        return error_response(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "AI_NOT_CONFIGURED",
+            "현재 AI 서비스를 사용할 수 없습니다. 관리자에게 문의해 주세요.",
+        )
     except AITimeoutError as exc:
         log_chat_event(
             "ai_call_fail",

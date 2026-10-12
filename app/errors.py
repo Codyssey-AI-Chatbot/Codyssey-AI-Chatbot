@@ -5,6 +5,10 @@ class AIError(Exception):
     """AI 처리 중 발생한 예상 가능한 오류의 기본 클래스."""
 
 
+class AIConfigurationError(AIError):
+    """AI 서비스에 필요한 서버 설정이 준비되지 않은 경우."""
+
+
 class AITimeoutError(AIError):
     """AI 공급자가 제한 시간 안에 응답하지 않은 경우."""
 

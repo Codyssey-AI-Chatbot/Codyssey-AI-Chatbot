@@ -3,8 +3,10 @@
 로그인한 사용자가 웹 화면에서 질문을 입력하면 서버가 AI API 를 호출해 답변을 돌려주고, 모든 대화를 DB 에 누적 저장해 사용자별로 조회할 수 있는 **웹 기반 AI 챗봇 서비스**입니다. Codyssey AI/SW 기초 과정 텀 프로젝트(3인 팀)로 FastAPI + SQLite 로 구현했습니다.
 
 - **배포 URL**: https://codyssey-ai-chatbot.onrender.com (Render 무료 플랜이라 15분 미사용 시 잠들며, 깨어나는 첫 접속은 약 1분 걸립니다. 상태 확인은 [`/health`](https://codyssey-ai-chatbot.onrender.com/health))
+- **Render 대시보드**: [codyssey-ai-chatbot 서비스](https://dashboard.render.com/web/srv-db4teg5ckfvc7386rcug) — 왼쪽 메뉴의 Logs(서버 로그), Events(배포 이력), Environment(환경 변수). Render 계정 권한이 있는 팀원만 열 수 있습니다
 - **저장소**: https://github.com/Codyssey-AI-Chatbot/Codyssey-AI-Chatbot
 - **기술 스택**: Python 3.10, FastAPI, SQLAlchemy 2, SQLite, Jinja2, OpenAI Python SDK(OpenAI 호환 API), pytest
+- **발표 준비 문서**: [요구사항·제약 사항 대응 설명서](docs/requirements-mapping.md) · [퍼실 문답 예상 Q&A](docs/facilitator-qna.md) · [C 역할 작업 설명서](docs/role-c-walkthrough.md) · [팀 역할 분담과 협업 규칙](docs/team-roles.md)
 
 ## 목차
 
@@ -56,6 +58,8 @@
 | 5 | 운영 및 유지보수 (로그/예외/입력 검증) | `request_received` → `ai_call_*` → `db_save_*` 로그, 에러 코드 응답, 빈 입력·2,000자 제한 | B |
 | 6 | 배포 및 접근성 | Render Blueprint(`render.yaml`), 이 문서의 배포/환경 변수 절 | C |
 | 7 | 협업 및 형상관리 | `main`/`develop`/`feature/*`, PR 템플릿, 이슈 연결, 팀원별 10회 이상 커밋 | 전원 |
+
+과제 문서의 4장(기능 요구 사항)과 6장(제약 사항)을 항목별로 나누어 구현 코드의 줄 링크와 검증 테스트를 적은 문서는 [요구사항·제약 사항 대응 설명서](docs/requirements-mapping.md)입니다.
 
 ---
 
@@ -143,7 +147,7 @@ sequenceDiagram
 | `app/errors.py` | `AITimeoutError`, `AIServiceError` | B |
 | `app/routers/pages.py` | `/`, `/signup`, `/login`, `/chat`, `/history`, `/admin` 템플릿 렌더링, 관리자 인증 | C |
 | `app/routers/logs.py` | `GET /api/me/chats` 내 로그 조회, 관리자 화면용 전체 조회 함수 | C |
-| `app/templates/`, `app/static/` | Jinja2 템플릿, CSS, `auth.js`(폼 전송), `chat.js`(채팅) | C |
+| `app/templates/`, `app/static/` | Jinja2 템플릿, CSS, `auth.js`(폼 전송), `chat.js`(채팅), `logout.js`(로그아웃) | C |
 | `scripts/check_logs.sql`, `scripts/check_logs.py` | DB 확인용 SQL 과 실행기 | C |
 | `render.yaml` | Render 배포 설정 | C |
 | `tests/` | `conftest.py`(A), `test_auth.py`(A), `test_chat.py`(B), `test_pages.py`·`test_logs.py`·`test_admin.py`(C) | 전원 |
@@ -168,12 +172,16 @@ sequenceDiagram
 │   │   ├── logs.py        # /api/me/chats
 │   │   └── pages.py       # 화면
 │   ├── templates/         # base, signup, login, chat, history, admin
-│   └── static/            # style.css, auth.js, chat.js
+│   └── static/            # style.css, auth.js, chat.js, logout.js
 ├── scripts/
 │   ├── check_logs.sql     # DB 확인용 SQL
 │   └── check_logs.py      # SQL 실행기 (sqlite3 CLI 없는 환경)
 ├── tests/
-├── docs/team-roles.md     # 역할 분담과 협업 규칙
+├── docs/
+│   ├── team-roles.md            # 역할 분담과 협업 규칙
+│   ├── requirements-mapping.md  # 요구사항·제약 사항 대응 설명서 (코드 링크 포함)
+│   ├── facilitator-qna.md       # 퍼실 문답 예상 Q&A
+│   └── role-c-walkthrough.md    # C 역할 작업 설명서 (코드 링크 포함)
 ├── .github/pull_request_template.md
 ├── .env.example           # 환경 변수 예시 (실제 값 없음)
 ├── render.yaml            # Render 배포 설정
@@ -550,7 +558,7 @@ INFO db_save_fail request_id=... user_id=1 error_type=OperationalError    # DB �
 | `ai_call_success` / `ai_call_fail` | AI 응답 수신 (지연 시간) / 실패 (오류 타입) |
 | `db_save_success` / `db_save_fail` | 대화 로그 저장 성공 (`chat_id`) / 실패 |
 
-로그는 로컬에서는 `uvicorn` 콘솔에, Render 에서는 서비스의 **Logs** 탭에 보입니다. uvicorn 의 접근 로그(`"POST /api/chat HTTP/1.1" 200 OK`)도 함께 남습니다.
+로그는 로컬에서는 `uvicorn` 콘솔에, Render 에서는 [서비스 대시보드](https://dashboard.render.com/web/srv-db4teg5ckfvc7386rcug)의 **Logs** 탭에 보입니다. uvicorn 의 접근 로그(`"POST /api/chat HTTP/1.1" 200 OK`)도 함께 남습니다.
 
 ### 예외 처리
 
@@ -658,7 +666,7 @@ Render 무료 플랜은 Shell 접속을 지원하지 않으므로, 배포된 서
 - **PR #12 `feature/context-strategy`** (3 커밋): 사용자별 최근 5개 대화 조회, 컨텍스트를 AI 요청에 연결, 컨텍스트 격리·순서 테스트.
 - **PR #14 `feature/logging-errors`** (3 커밋): `request_id` 기반 이벤트 로그(`request_received`, `ai_call_*`, `db_save_*`, `latency_ms`), 타임아웃 504·AI 실패 502·DB 실패 500 응답과 롤백, 민감정보 비노출 테스트.
 
-### C — @ADOHI (UI·로그 조회·배포·문서) · 29 커밋 · 기능 PR 9개, 릴리스 PR
+### C — @ADOHI (UI·로그 조회·배포·문서) · 37 커밋 · 기능 PR 12개, 릴리스 PR
 
 - **PR #21 `feature/base-ui`** (4 커밋): 공통 레이아웃 템플릿과 CSS, 회원가입 페이지, 로그인 페이지(`auth.js` 로 API 호출과 오류 표시), 페이지 라우트 테스트.
 - **PR #22 `feature/chat-ui`** (3 커밋): 로그인 보호된 `/chat` 페이지 마크업, `chat.js`(fetch 로 질문 전송·말풍선 표시), 로딩 표시·입력 잠금·에러 코드 말풍선·세션 만료 처리.
@@ -669,6 +677,9 @@ Render 무료 플랜은 Shell 접속을 지원하지 않으므로, 배포된 서
 - **PR #30 `docs/deploy-url`** (1 커밋): 외부 접속을 확인하고 README 에 배포 URL 기입.
 - **PR #32 `feature/admin-log-view`** (7 커밋): 관리자 조회 페이지 `/admin`(HTTP Basic 인증), 전체 로그·사용자별 대화 수 조회 함수, `ADMIN_PASSWORD` 설정, 테스트 9개(이후 10개), README 반영.
 - **PR #34 `fix/render-manual-deploy`** (3 커밋): Render 배포 이력을 확인해 `--loop asyncio` 를 되돌리고, push 로는 재배포되지 않아 수동 배포가 필요하다는 점을 `render.yaml` 과 README 에 반영. 관리자 테스트가 로컬 `.env` 에 의존하던 문제 수정.
+- **PR #36 `docs/qna-and-walkthrough`** (3 커밋): 발표 준비 문서 두 개(`docs/facilitator-qna.md`, `docs/role-c-walkthrough.md`)를 저장소에 추가하고, README 에 Render 대시보드 바로가기와 문서 링크 추가.
+- **PR #37 `chore/logout-script-static`** (2 커밋): `base.html` 에 직접 적혀 있던 로그아웃 스크립트를 다른 JS 와 같은 방식으로 `static/logout.js` 로 분리, 테스트와 문서 갱신.
+- **PR #38 `docs/requirements-mapping`** (3 커밋): 과제 문서 4장·6장의 요구 항목마다 구현 코드 링크와 검증 테스트를 정리한 `docs/requirements-mapping.md` 추가, 작업 설명서의 인용 오타 수정, README 반영.
 - **릴리스 PR** (`develop` → `main`, 커밋 없이 머지 커밋만): #27 첫 릴리스, #29, #33 과 이후 릴리스.
 
 배포 단계의 PR(#27 이후)은 팀원 리뷰를 받기 어려운 일정이라 작성자가 검증 후 직접 머지했고, 사유를 각 PR 본문의 "머지 메모"에 남겼습니다.

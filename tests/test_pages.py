@@ -23,6 +23,7 @@ def test_login_page_renders_form(client):
     assert response.status_code == 200
     assert 'data-api="/api/auth/login"' in response.text
     assert "회원가입이 완료되었습니다" not in response.text
+    assert "/static/logout.js" not in response.text  # 로그아웃 버튼이 없는 화면에는 스크립트도 없다
 
 
 def test_login_page_shows_signup_notice(client):
@@ -62,3 +63,6 @@ def test_chat_page_renders_for_logged_in_user(client):
     assert response.status_code == 200
     assert 'id="chat-form"' in response.text
     assert CREDENTIALS["username"] in response.text  # 상단 바에 사용자명 표시
+    assert 'id="logout-button"' in response.text
+    assert '<script src="/static/logout.js"></script>' in response.text
+    assert client.get("/static/logout.js").status_code == 200
