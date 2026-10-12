@@ -684,7 +684,7 @@ Render 무료 플랜은 Shell 접속을 지원하지 않으므로, 배포된 서
 - **PR #37 `chore/logout-script-static`** (2 커밋): `base.html` 에 직접 적혀 있던 로그아웃 스크립트를 다른 JS 와 같은 방식으로 `static/logout.js` 로 분리, 테스트와 문서 갱신.
 - **PR #38 `docs/requirements-mapping`** (3 커밋): 과제 문서 4장·6장의 요구 항목마다 구현 코드 링크와 검증 테스트를 정리한 `docs/requirements-mapping.md` 추가, 작업 설명서의 인용 오타 수정, README 반영.
 - **PR #41 `docs/sync-ai-config-error`** (2 커밋): B 의 #39 를 문서에 반영. README 의 오류 코드·예외 처리 표와 테스트 수(57개), B 의 작업 요약, 발표 문서의 이슈 #20 상태 갱신.
-- **릴리스 PR** (`develop` → `main`, 커밋 없이 머지 커밋만): #27 첫 릴리스, #29, #33, #35, #40.
+- **릴리스 PR** (`develop` → `main`, 커밋 없이 머지 커밋만): #27 첫 릴리스부터 배포할 때마다 하나씩 만들었습니다. [전체 목록](https://github.com/Codyssey-AI-Chatbot/Codyssey-AI-Chatbot/pulls?q=is%3Apr+is%3Amerged+base%3Amain)
 
 배포 단계의 PR(#27 이후)은 팀원 리뷰를 받기 어려운 일정이라 작성자가 검증 후 직접 머지했고, 사유를 각 PR 본문의 "머지 메모"에 남겼습니다.
 
