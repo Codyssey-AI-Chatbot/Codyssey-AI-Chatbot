@@ -1,15 +1,26 @@
 """인증된 채팅 API의 입력 검증, AI 호출, 저장 테스트."""
 
+import asyncio
 from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 import logging
 import re
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
+import httpx2
 import pytest
+from openai import (
+    APIConnectionError,
+    APIStatusError,
+    APITimeoutError,
+    OpenAIError,
+    RateLimitError,
+)
 from pydantic import SecretStr
 from sqlalchemy import select
 
-from app.ai_client import AICompletion, ChatMessage, get_ai_client
+from app.ai_client import AICompletion, ChatMessage, OpenAIChatClient, get_ai_client
 from app.config import settings
 from app.db import SessionLocal, get_db
 from app.errors import (
@@ -24,6 +35,35 @@ from app.models import ChatLog, User
 
 USERNAME = "chat_tester"
 PASSWORD = "correct-horse"
+
+
+def make_openai_client(*, result=None, error: Exception | None = None) -> OpenAIChatClient:
+    create = AsyncMock(return_value=result, side_effect=error)
+    sdk_client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create)),
+    )
+    return OpenAIChatClient(client=sdk_client, model="test-model")
+
+
+def make_status_error(status_code: int, *, rate_limit: bool = False) -> APIStatusError:
+    request = httpx2.Request("POST", "https://provider.invalid/v1/chat/completions")
+    response = httpx2.Response(status_code, request=request)
+    error_type = RateLimitError if rate_limit else APIStatusError
+    return error_type(
+        "private provider error containing secret-api-key",
+        response=response,
+        body={"private": "response body"},
+    )
+
+
+def capture_provider_error(error: Exception):
+    async def call_client():
+        client = make_openai_client(error=error)
+        return await client.complete([ChatMessage(role="user", content="질문 전문")])
+
+    with pytest.raises((AITimeoutError, AIServiceError)) as caught:
+        asyncio.run(call_client())
+    return caught.value
 
 
 def test_ai_error_categories_cover_provider_failure_policy():
@@ -109,6 +149,128 @@ def test_ai_completion_describes_final_provider_and_attempts():
     assert completion.provider == "gemini"
     assert completion.fallback_used is True
     assert completion.attempts == attempts
+
+
+def test_codyssey_timeout_is_retryable_without_sensitive_metadata():
+    request = httpx2.Request("POST", "https://provider.invalid/v1/chat/completions")
+    sdk_error = APITimeoutError(request=request)
+
+    error = capture_provider_error(sdk_error)
+
+    assert isinstance(error, AITimeoutError)
+    assert error.__cause__ is sdk_error
+    assert error.failure == AIProviderFailure(
+        provider="codyssey",
+        category=AIErrorCategory.TIMEOUT,
+        status_code=None,
+        retryable=True,
+        exception_type="APITimeoutError",
+    )
+
+
+def test_codyssey_connection_error_is_retryable():
+    request = httpx2.Request("POST", "https://provider.invalid/v1/chat/completions")
+    error = capture_provider_error(APIConnectionError(request=request))
+
+    assert isinstance(error, AIServiceError)
+    assert error.failure is not None
+    assert error.failure.category is AIErrorCategory.CONNECTION
+    assert error.failure.retryable is True
+    assert error.failure.status_code is None
+
+
+def test_codyssey_rate_limit_error_is_retryable_429():
+    error = capture_provider_error(make_status_error(429, rate_limit=True))
+
+    assert isinstance(error, AIServiceError)
+    assert error.failure is not None
+    assert error.failure.category is AIErrorCategory.RATE_LIMIT
+    assert error.failure.status_code == 429
+    assert error.failure.retryable is True
+    assert error.failure.exception_type == "RateLimitError"
+    assert "secret-api-key" not in str(error)
+    assert "response body" not in repr(error.failure)
+
+
+@pytest.mark.parametrize(
+    ("status_code", "expected_error", "category", "retryable"),
+    [
+        (408, AITimeoutError, AIErrorCategory.TIMEOUT, True),
+        (429, AIServiceError, AIErrorCategory.RATE_LIMIT, True),
+        (500, AIServiceError, AIErrorCategory.UPSTREAM_5XX, True),
+        (503, AIServiceError, AIErrorCategory.UPSTREAM_5XX, True),
+        (400, AIServiceError, AIErrorCategory.UPSTREAM_4XX, False),
+        (401, AIServiceError, AIErrorCategory.CONFIGURATION, False),
+        (403, AIServiceError, AIErrorCategory.CONFIGURATION, False),
+    ],
+)
+def test_codyssey_status_errors_are_classified(
+    status_code,
+    expected_error,
+    category,
+    retryable,
+):
+    error = capture_provider_error(make_status_error(status_code))
+
+    assert isinstance(error, expected_error)
+    assert error.failure is not None
+    assert error.failure.provider == "codyssey"
+    assert error.failure.category is category
+    assert error.failure.status_code == status_code
+    assert error.failure.retryable is retryable
+    assert error.failure.exception_type == "APIStatusError"
+
+
+def test_codyssey_unknown_openai_error_is_not_retryable():
+    sdk_error = OpenAIError("private SDK detail with secret-api-key")
+
+    error = capture_provider_error(sdk_error)
+
+    assert error.__cause__ is sdk_error
+    assert error.failure is not None
+    assert error.failure.category is AIErrorCategory.UNKNOWN
+    assert error.failure.retryable is False
+    assert "secret-api-key" not in repr(error.failure)
+    assert "private SDK detail" not in str(error)
+
+
+@pytest.mark.parametrize(
+    "unexpected_error",
+    [RuntimeError("unexpected code bug"), asyncio.CancelledError()],
+)
+def test_codyssey_unexpected_and_cancelled_errors_are_not_normalized(unexpected_error):
+    client = make_openai_client(error=unexpected_error)
+
+    with pytest.raises(type(unexpected_error)) as caught:
+        asyncio.run(client.complete([ChatMessage(role="user", content="질문 전문")]))
+
+    assert caught.value is unexpected_error
+
+
+@pytest.mark.parametrize(
+    ("result", "exception_type"),
+    [
+        (SimpleNamespace(choices=[]), "MissingChoices"),
+        (
+            SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content="   "))],
+            ),
+            "EmptyContent",
+        ),
+    ],
+)
+def test_codyssey_invalid_response_is_retryable(result, exception_type):
+    client = make_openai_client(result=result)
+
+    with pytest.raises(AIServiceError) as caught:
+        asyncio.run(client.complete([ChatMessage(role="user", content="질문 전문")]))
+
+    failure = caught.value.failure
+    assert failure is not None
+    assert failure.category is AIErrorCategory.INVALID_RESPONSE
+    assert failure.retryable is True
+    assert failure.status_code is None
+    assert failure.exception_type == exception_type
 
 
 class FakeAIClient:

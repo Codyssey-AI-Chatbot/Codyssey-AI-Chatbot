@@ -16,18 +16,22 @@ from openai import (
     APITimeoutError,
     AsyncOpenAI,
     OpenAIError,
+    RateLimitError,
 )
 
 from app.config import settings
 from app.errors import (
     AIConfigurationError,
+    AIErrorCategory,
     AIProviderAttempt,
+    AIProviderFailure,
     AIServiceError,
     AITimeoutError,
 )
 
 
 ChatRole = Literal["system", "user", "assistant"]
+CODYSSEY_PROVIDER = "codyssey"
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +79,53 @@ class OpenAIChatClient:
         self._client = client
         self._model = model
 
+    @staticmethod
+    def _failure(
+        *,
+        category: AIErrorCategory,
+        retryable: bool,
+        exception_type: str,
+        status_code: int | None = None,
+    ) -> AIProviderFailure:
+        """원본 오류의 민감한 내용 없이 fallback 판단 정보만 만든다."""
+
+        return AIProviderFailure(
+            provider=CODYSSEY_PROVIDER,
+            category=category,
+            status_code=status_code,
+            retryable=retryable,
+            exception_type=exception_type,
+        )
+
+    @classmethod
+    def _status_failure(cls, exc: APIStatusError) -> AIProviderFailure:
+        status_code = exc.status_code
+        if status_code == 429:
+            category = AIErrorCategory.RATE_LIMIT
+            retryable = True
+        elif status_code == 408:
+            category = AIErrorCategory.TIMEOUT
+            retryable = True
+        elif status_code in {401, 403}:
+            category = AIErrorCategory.CONFIGURATION
+            retryable = False
+        elif 500 <= status_code < 600:
+            category = AIErrorCategory.UPSTREAM_5XX
+            retryable = True
+        elif 400 <= status_code < 500:
+            category = AIErrorCategory.UPSTREAM_4XX
+            retryable = False
+        else:
+            category = AIErrorCategory.UNKNOWN
+            retryable = False
+
+        return cls._failure(
+            category=category,
+            status_code=status_code,
+            retryable=retryable,
+            exception_type=type(exc).__name__,
+        )
+
     async def complete(self, messages: Sequence[ChatMessage]) -> str:
         try:
             completion = await self._client.chat.completions.create(
@@ -85,18 +136,56 @@ class OpenAIChatClient:
                 ],
             )
         except APITimeoutError as exc:
-            raise AITimeoutError("AI service timed out") from exc
-        except (APIConnectionError, APIStatusError) as exc:
-            raise AIServiceError("AI service request failed") from exc
+            failure = self._failure(
+                category=AIErrorCategory.TIMEOUT,
+                retryable=True,
+                exception_type=type(exc).__name__,
+            )
+            raise AITimeoutError("AI service timed out", failure=failure) from exc
+        except RateLimitError as exc:
+            failure = self._failure(
+                category=AIErrorCategory.RATE_LIMIT,
+                status_code=429,
+                retryable=True,
+                exception_type=type(exc).__name__,
+            )
+            raise AIServiceError("AI service rate limit exceeded", failure=failure) from exc
+        except APIConnectionError as exc:
+            failure = self._failure(
+                category=AIErrorCategory.CONNECTION,
+                retryable=True,
+                exception_type=type(exc).__name__,
+            )
+            raise AIServiceError("AI service connection failed", failure=failure) from exc
+        except APIStatusError as exc:
+            failure = self._status_failure(exc)
+            if failure.category is AIErrorCategory.TIMEOUT:
+                raise AITimeoutError("AI service timed out", failure=failure) from exc
+            raise AIServiceError("AI service request failed", failure=failure) from exc
         except OpenAIError as exc:
-            raise AIServiceError("AI service returned an invalid response") from exc
+            failure = self._failure(
+                category=AIErrorCategory.UNKNOWN,
+                retryable=False,
+                exception_type=type(exc).__name__,
+            )
+            raise AIServiceError("AI service request failed", failure=failure) from exc
 
         if not completion.choices:
-            raise AIServiceError("AI service returned no choices")
+            failure = self._failure(
+                category=AIErrorCategory.INVALID_RESPONSE,
+                retryable=True,
+                exception_type="MissingChoices",
+            )
+            raise AIServiceError("AI service returned no choices", failure=failure)
 
         content = completion.choices[0].message.content
         if content is None or not content.strip():
-            raise AIServiceError("AI service returned an empty response")
+            failure = self._failure(
+                category=AIErrorCategory.INVALID_RESPONSE,
+                retryable=True,
+                exception_type="EmptyContent",
+            )
+            raise AIServiceError("AI service returned an empty response", failure=failure)
         return content
 
 
