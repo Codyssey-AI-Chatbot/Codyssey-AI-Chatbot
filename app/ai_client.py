@@ -8,6 +8,7 @@
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from functools import lru_cache
+from time import perf_counter
 from typing import Literal, Protocol
 
 from google import genai
@@ -28,6 +29,7 @@ from app.config import settings
 from app.errors import (
     AIConfigurationError,
     AIErrorCategory,
+    AIFallbackReason,
     AIProviderAttempt,
     AIProviderFailure,
     AIServiceError,
@@ -48,19 +50,22 @@ class ChatMessage:
     content: str
 
 
-@dataclass(frozen=True, slots=True)
-class AICompletion:
-    """최종 답변과 공급자별 시도 결과.
+class AICompletion(str):
+    """기존 문자열 계약을 유지하는 공급자 메타데이터 포함 답변."""
 
-    F-02에서는 구조만 정의한다. 기존 라우터 호환성을 위해 현재
-    ``AIClient.complete``의 문자열 반환 계약은 유지하며, fallback과 라우터
-    통합 단계에서 이 결과형을 연결한다.
-    """
-
-    text: str
-    provider: str
-    fallback_used: bool
-    attempts: tuple[AIProviderAttempt, ...]
+    def __new__(
+        cls,
+        text: str,
+        provider: str,
+        fallback_used: bool,
+        attempts: Sequence[AIProviderAttempt],
+    ) -> "AICompletion":
+        completion = super().__new__(cls, text)
+        completion.text = text
+        completion.provider = provider
+        completion.fallback_used = fallback_used
+        completion.attempts = tuple(attempts)
+        return completion
 
 
 class AIClient(Protocol):
@@ -330,6 +335,180 @@ class GeminiChatClient:
         return content
 
 
+class FallbackAIClient:
+    """Codyssey 실패가 재시도 가능한 경우 Gemini를 한 번 호출한다."""
+
+    _FALLBACK_CATEGORIES = frozenset(
+        {
+            AIErrorCategory.TIMEOUT,
+            AIErrorCategory.CONNECTION,
+            AIErrorCategory.RATE_LIMIT,
+            AIErrorCategory.UPSTREAM_5XX,
+            AIErrorCategory.INVALID_RESPONSE,
+        }
+    )
+
+    def __init__(
+        self,
+        *,
+        primary: AIClient,
+        fallback: AIClient | None,
+        fallback_enabled: bool,
+    ) -> None:
+        self._primary = primary
+        self._fallback = fallback
+        self._fallback_enabled = fallback_enabled
+
+    @staticmethod
+    def _latency_ms(started_at: float) -> int:
+        return round((perf_counter() - started_at) * 1_000)
+
+    @staticmethod
+    def _safe_failure(
+        error: AIConfigurationError | AIServiceError | AITimeoutError,
+        *,
+        provider: str,
+    ) -> AIProviderFailure:
+        if error.failure is not None:
+            return error.failure
+        if isinstance(error, AITimeoutError):
+            return AIProviderFailure(
+                provider=provider,
+                category=AIErrorCategory.TIMEOUT,
+                status_code=None,
+                retryable=True,
+                exception_type=type(error).__name__,
+            )
+        if isinstance(error, AIConfigurationError):
+            return AIProviderFailure(
+                provider=provider,
+                category=AIErrorCategory.CONFIGURATION,
+                status_code=None,
+                retryable=False,
+                exception_type=type(error).__name__,
+            )
+        return AIProviderFailure(
+            provider=provider,
+            category=AIErrorCategory.UNKNOWN,
+            status_code=None,
+            retryable=False,
+            exception_type=type(error).__name__,
+        )
+
+    @staticmethod
+    def _set_skipped_fallback(
+        error: AIServiceError | AITimeoutError,
+        *,
+        attempt: AIProviderAttempt,
+        reason: AIFallbackReason,
+    ) -> None:
+        error.attempts = (attempt,)
+        error.fallback_reason = reason
+
+    async def complete(self, messages: Sequence[ChatMessage]) -> str:
+        primary_started_at = perf_counter()
+        try:
+            primary_text = await self._primary.complete(messages)
+        except (AITimeoutError, AIServiceError) as primary_error:
+            primary_failure = self._safe_failure(
+                primary_error,
+                provider=CODYSSEY_PROVIDER,
+            )
+            primary_attempt = AIProviderAttempt(
+                provider=CODYSSEY_PROVIDER,
+                attempt=1,
+                succeeded=False,
+                latency_ms=self._latency_ms(primary_started_at),
+                failure=primary_failure,
+            )
+
+            can_fallback = (
+                primary_failure.provider == CODYSSEY_PROVIDER
+                and primary_failure.retryable
+                and primary_failure.category in self._FALLBACK_CATEGORIES
+            )
+            if not can_fallback:
+                self._set_skipped_fallback(
+                    primary_error,
+                    attempt=primary_attempt,
+                    reason=AIFallbackReason.NON_RETRYABLE,
+                )
+                raise
+            if not self._fallback_enabled:
+                self._set_skipped_fallback(
+                    primary_error,
+                    attempt=primary_attempt,
+                    reason=AIFallbackReason.DISABLED,
+                )
+                raise
+            if self._fallback is None:
+                self._set_skipped_fallback(
+                    primary_error,
+                    attempt=primary_attempt,
+                    reason=AIFallbackReason.NOT_CONFIGURED,
+                )
+                raise
+
+            fallback_started_at = perf_counter()
+            try:
+                fallback_text = await self._fallback.complete(messages)
+            except (AIConfigurationError, AITimeoutError, AIServiceError) as fallback_error:
+                fallback_failure = self._safe_failure(
+                    fallback_error,
+                    provider=GEMINI_PROVIDER,
+                )
+                fallback_attempt = AIProviderAttempt(
+                    provider=GEMINI_PROVIDER,
+                    attempt=2,
+                    succeeded=False,
+                    latency_ms=self._latency_ms(fallback_started_at),
+                    failure=fallback_failure,
+                )
+                attempts = (primary_attempt, fallback_attempt)
+                both_timed_out = all(
+                    attempt.failure is not None
+                    and attempt.failure.category is AIErrorCategory.TIMEOUT
+                    for attempt in attempts
+                )
+                if both_timed_out:
+                    raise AITimeoutError(
+                        "AI services timed out",
+                        failure=fallback_failure,
+                        attempts=attempts,
+                    ) from fallback_error
+                raise AIServiceError(
+                    "AI services failed",
+                    failure=fallback_failure,
+                    attempts=attempts,
+                ) from fallback_error
+
+            fallback_attempt = AIProviderAttempt(
+                provider=GEMINI_PROVIDER,
+                attempt=2,
+                succeeded=True,
+                latency_ms=self._latency_ms(fallback_started_at),
+            )
+            return AICompletion(
+                text=str(fallback_text),
+                provider=GEMINI_PROVIDER,
+                fallback_used=True,
+                attempts=(primary_attempt, fallback_attempt),
+            )
+
+        primary_attempt = AIProviderAttempt(
+            provider=CODYSSEY_PROVIDER,
+            attempt=1,
+            succeeded=True,
+            latency_ms=self._latency_ms(primary_started_at),
+        )
+        return AICompletion(
+            text=str(primary_text),
+            provider=CODYSSEY_PROVIDER,
+            fallback_used=False,
+            attempts=(primary_attempt,),
+        )
+
+
 @lru_cache
 def get_gemini_client() -> AIClient:
     """설정된 Gemini 클라이언트를 만들되 네트워크 연결은 호출 때까지 미룬다."""
@@ -373,4 +552,19 @@ def get_ai_client() -> AIClient:
         timeout=settings.ai_timeout_seconds,
         max_retries=0,
     )
-    return OpenAIChatClient(client=client, model=settings.ai_model)
+    primary = OpenAIChatClient(client=client, model=settings.ai_model)
+    gemini_configured = (
+        settings.gemini_api_key is not None
+        and bool(settings.gemini_api_key.get_secret_value())
+        and bool(settings.gemini_model)
+    )
+    fallback = (
+        get_gemini_client()
+        if settings.ai_fallback_enabled and gemini_configured
+        else None
+    )
+    return FallbackAIClient(
+        primary=primary,
+        fallback=fallback,
+        fallback_enabled=settings.ai_fallback_enabled,
+    )

@@ -25,6 +25,7 @@ from sqlalchemy import select
 from app.ai_client import (
     AICompletion,
     ChatMessage,
+    FallbackAIClient,
     GeminiChatClient,
     OpenAIChatClient,
     get_ai_client,
@@ -33,7 +34,9 @@ from app.ai_client import (
 from app.config import settings
 from app.db import SessionLocal, get_db
 from app.errors import (
+    AIConfigurationError,
     AIErrorCategory,
+    AIFallbackReason,
     AIProviderAttempt,
     AIProviderFailure,
     AIServiceError,
@@ -525,6 +528,324 @@ def test_gemini_unexpected_and_cancelled_errors_are_not_normalized(unexpected_er
     assert async_client.closed is True
 
 
+class StubProviderClient:
+    def __init__(
+        self,
+        *,
+        answer: str = "provider answer",
+        error: BaseException | None = None,
+    ) -> None:
+        self.answer = answer
+        self.error = error
+        self.calls: list[list[ChatMessage]] = []
+
+    async def complete(self, messages: Sequence[ChatMessage]) -> str:
+        self.calls.append(list(messages))
+        if self.error is not None:
+            raise self.error
+        return self.answer
+
+
+def provider_error(
+    *,
+    provider: str,
+    category: AIErrorCategory,
+    retryable: bool,
+    status_code: int | None = None,
+    timeout: bool = False,
+    private_message: str = "private provider detail with secret-api-key",
+):
+    failure = AIProviderFailure(
+        provider=provider,
+        category=category,
+        status_code=status_code,
+        retryable=retryable,
+        exception_type="SyntheticProviderError",
+    )
+    error_type = AITimeoutError if timeout else AIServiceError
+    return error_type(private_message, failure=failure)
+
+
+def run_fallback_client(primary, fallback, *, enabled=True):
+    client = FallbackAIClient(
+        primary=primary,
+        fallback=fallback,
+        fallback_enabled=enabled,
+    )
+    messages = [
+        ChatMessage(role="user", content="이전 질문"),
+        ChatMessage(role="assistant", content="이전 답변"),
+        ChatMessage(role="user", content="현재 질문"),
+    ]
+    return asyncio.run(client.complete(messages)), messages
+
+
+def test_fallback_primary_success_does_not_call_gemini():
+    primary = StubProviderClient(answer="Codyssey 답변")
+    fallback = StubProviderClient(answer="호출되면 안 되는 답변")
+
+    result, messages = run_fallback_client(primary, fallback)
+
+    assert isinstance(result, str)
+    assert isinstance(result, AICompletion)
+    assert result == "Codyssey 답변"
+    assert result.text == "Codyssey 답변"
+    assert result.provider == "codyssey"
+    assert result.fallback_used is False
+    assert len(result.attempts) == 1
+    assert result.attempts[0].succeeded is True
+    assert primary.calls == [messages]
+    assert fallback.calls == []
+
+
+@pytest.mark.parametrize(
+    ("category", "status_code", "timeout"),
+    [
+        (AIErrorCategory.TIMEOUT, None, True),
+        (AIErrorCategory.CONNECTION, None, False),
+        (AIErrorCategory.RATE_LIMIT, 429, False),
+        (AIErrorCategory.UPSTREAM_5XX, 503, False),
+        (AIErrorCategory.INVALID_RESPONSE, None, False),
+    ],
+)
+def test_fallback_retryable_primary_failure_uses_gemini_once(
+    category,
+    status_code,
+    timeout,
+):
+    primary = StubProviderClient(
+        error=provider_error(
+            provider="codyssey",
+            category=category,
+            retryable=True,
+            status_code=status_code,
+            timeout=timeout,
+        )
+    )
+    fallback = StubProviderClient(answer="Gemini fallback 답변")
+
+    result, messages = run_fallback_client(primary, fallback)
+
+    assert result == "Gemini fallback 답변"
+    assert result.provider == "gemini"
+    assert result.fallback_used is True
+    assert [attempt.provider for attempt in result.attempts] == [
+        "codyssey",
+        "gemini",
+    ]
+    assert [attempt.succeeded for attempt in result.attempts] == [False, True]
+    assert primary.calls == [messages]
+    assert fallback.calls == [messages]
+
+
+@pytest.mark.parametrize(
+    ("status_code", "category"),
+    [
+        (400, AIErrorCategory.UPSTREAM_4XX),
+        (401, AIErrorCategory.CONFIGURATION),
+        (403, AIErrorCategory.CONFIGURATION),
+    ],
+)
+def test_fallback_non_retryable_primary_status_does_not_call_gemini(
+    status_code,
+    category,
+):
+    primary_error = provider_error(
+        provider="codyssey",
+        category=category,
+        retryable=False,
+        status_code=status_code,
+    )
+    primary = StubProviderClient(error=primary_error)
+    fallback = StubProviderClient()
+    client = FallbackAIClient(primary=primary, fallback=fallback, fallback_enabled=True)
+
+    with pytest.raises(AIServiceError) as caught:
+        asyncio.run(client.complete([ChatMessage(role="user", content="질문")]))
+
+    assert caught.value is primary_error
+    assert caught.value.fallback_reason is AIFallbackReason.NON_RETRYABLE
+    assert len(caught.value.attempts) == 1
+    assert fallback.calls == []
+
+
+def test_fallback_primary_configuration_error_preserves_503_meaning():
+    primary_error = AIConfigurationError("AI client is not configured")
+    primary = StubProviderClient(error=primary_error)
+    fallback = StubProviderClient()
+    client = FallbackAIClient(primary=primary, fallback=fallback, fallback_enabled=True)
+
+    with pytest.raises(AIConfigurationError) as caught:
+        asyncio.run(client.complete([ChatMessage(role="user", content="질문")]))
+
+    assert caught.value is primary_error
+    assert fallback.calls == []
+
+
+@pytest.mark.parametrize(
+    ("enabled", "reason"),
+    [
+        (True, AIFallbackReason.NOT_CONFIGURED),
+        (False, AIFallbackReason.DISABLED),
+    ],
+)
+def test_fallback_unavailable_preserves_primary_error_with_safe_reason(
+    enabled,
+    reason,
+):
+    primary_error = provider_error(
+        provider="codyssey",
+        category=AIErrorCategory.CONNECTION,
+        retryable=True,
+    )
+    primary = StubProviderClient(error=primary_error)
+    client = FallbackAIClient(
+        primary=primary,
+        fallback=None,
+        fallback_enabled=enabled,
+    )
+
+    with pytest.raises(AIServiceError) as caught:
+        asyncio.run(client.complete([ChatMessage(role="user", content="질문")]))
+
+    assert caught.value is primary_error
+    assert caught.value.failure is primary_error.failure
+    assert caught.value.fallback_reason is reason
+    assert len(caught.value.attempts) == 1
+
+
+def test_fallback_failure_contains_two_safe_attempts():
+    primary = StubProviderClient(
+        error=provider_error(
+            provider="codyssey",
+            category=AIErrorCategory.RATE_LIMIT,
+            retryable=True,
+            status_code=429,
+        )
+    )
+    fallback_error = provider_error(
+        provider="gemini",
+        category=AIErrorCategory.UPSTREAM_5XX,
+        retryable=True,
+        status_code=503,
+        private_message="private Gemini response body with secret-api-key",
+    )
+    fallback = StubProviderClient(error=fallback_error)
+    client = FallbackAIClient(primary=primary, fallback=fallback, fallback_enabled=True)
+
+    with pytest.raises(AIServiceError) as caught:
+        asyncio.run(client.complete([ChatMessage(role="user", content="비밀 질문")]))
+
+    error = caught.value
+    assert error.__cause__ is fallback_error
+    assert [attempt.provider for attempt in error.attempts] == ["codyssey", "gemini"]
+    assert [attempt.succeeded for attempt in error.attempts] == [False, False]
+    assert [attempt.failure.category for attempt in error.attempts] == [
+        AIErrorCategory.RATE_LIMIT,
+        AIErrorCategory.UPSTREAM_5XX,
+    ]
+    assert "비밀 질문" not in str(error)
+    assert "secret-api-key" not in str(error)
+    assert "response body" not in repr(error.attempts)
+
+
+def test_fallback_two_timeouts_preserve_504_meaning():
+    primary = StubProviderClient(
+        error=provider_error(
+            provider="codyssey",
+            category=AIErrorCategory.TIMEOUT,
+            retryable=True,
+            timeout=True,
+        )
+    )
+    fallback = StubProviderClient(
+        error=provider_error(
+            provider="gemini",
+            category=AIErrorCategory.TIMEOUT,
+            retryable=True,
+            timeout=True,
+        )
+    )
+    client = FallbackAIClient(primary=primary, fallback=fallback, fallback_enabled=True)
+
+    with pytest.raises(AITimeoutError) as caught:
+        asyncio.run(client.complete([ChatMessage(role="user", content="질문")]))
+
+    assert len(caught.value.attempts) == 2
+    assert all(
+        attempt.failure.category is AIErrorCategory.TIMEOUT
+        for attempt in caught.value.attempts
+    )
+
+
+class ProviderAbort(BaseException):
+    pass
+
+
+@pytest.mark.parametrize(
+    "unexpected_error",
+    [
+        RuntimeError("unexpected primary bug"),
+        asyncio.CancelledError(),
+        ProviderAbort("stop provider"),
+    ],
+)
+def test_fallback_does_not_swallow_unexpected_or_base_exceptions(unexpected_error):
+    primary = StubProviderClient(error=unexpected_error)
+    fallback = StubProviderClient()
+    client = FallbackAIClient(primary=primary, fallback=fallback, fallback_enabled=True)
+
+    with pytest.raises(type(unexpected_error)) as caught:
+        asyncio.run(client.complete([ChatMessage(role="user", content="질문")]))
+
+    assert caught.value is unexpected_error
+    assert fallback.calls == []
+
+
+def test_fallback_does_not_hide_unexpected_gemini_error():
+    primary = StubProviderClient(
+        error=provider_error(
+            provider="codyssey",
+            category=AIErrorCategory.CONNECTION,
+            retryable=True,
+        )
+    )
+    fallback_error = RuntimeError("unexpected Gemini bug")
+    fallback = StubProviderClient(error=fallback_error)
+    client = FallbackAIClient(primary=primary, fallback=fallback, fallback_enabled=True)
+
+    with pytest.raises(RuntimeError) as caught:
+        asyncio.run(client.complete([ChatMessage(role="user", content="질문")]))
+
+    assert caught.value is fallback_error
+    assert len(fallback.calls) == 1
+
+
+def test_get_ai_client_assembles_fallback_without_cache_leak(monkeypatch):
+    fallback = StubProviderClient(answer="Gemini 답변")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(settings, "ai_api_key", SecretStr("fake-primary-key"))
+        patch.setattr(settings, "gemini_api_key", SecretStr("fake-gemini-key"))
+        patch.setattr(settings, "gemini_model", "configured-test-model")
+        patch.setattr(settings, "ai_fallback_enabled", True)
+        patch.setattr("app.ai_client.AsyncOpenAI", lambda **_kwargs: SimpleNamespace())
+        patch.setattr("app.ai_client.get_gemini_client", lambda: fallback)
+        get_ai_client.cache_clear()
+
+        first = get_ai_client()
+        second = get_ai_client()
+
+        assert isinstance(first, FallbackAIClient)
+        assert first is second
+        assert first._fallback is fallback
+
+    get_ai_client.cache_clear()
+    get_gemini_client.cache_clear()
+    assert get_ai_client.cache_info().currsize == 0
+    assert get_gemini_client.cache_info().currsize == 0
+
+
 class FakeAIClient:
     """네트워크 요청 없이 답변하거나 지정된 오류를 발생시키는 테스트 대역."""
 
@@ -757,6 +1078,38 @@ def test_chat_success_returns_answer_and_saves_current_user(client, fake_ai):
     assert logs[0].user_id == user_id
     assert logs[0].question == "저장할 질문"
     assert logs[0].answer == fake_ai.answer
+
+
+def test_chat_fallback_success_keeps_response_and_storage_contract(client):
+    primary = StubProviderClient(
+        error=provider_error(
+            provider="codyssey",
+            category=AIErrorCategory.CONNECTION,
+            retryable=True,
+        )
+    )
+    fallback = StubProviderClient(answer="저장되는 Gemini 답변")
+    composite = FallbackAIClient(
+        primary=primary,
+        fallback=fallback,
+        fallback_enabled=True,
+    )
+    app.dependency_overrides[get_ai_client] = lambda: composite
+    try:
+        user_id = signup_and_login(client)
+        response = client.post("/api/chat", json={"message": "fallback 저장 질문"})
+    finally:
+        app.dependency_overrides.pop(get_ai_client, None)
+
+    assert response.status_code == 200
+    assert response.json()["answer"] == "저장되는 Gemini 답변"
+    logs = load_chat_logs()
+    assert len(logs) == 1
+    assert logs[0].user_id == user_id
+    assert logs[0].question == "fallback 저장 질문"
+    assert logs[0].answer == "저장되는 Gemini 답변"
+    assert len(primary.calls) == 1
+    assert len(fallback.calls) == 1
 
 
 def test_chat_ai_failure_does_not_save_log(client, fake_ai):

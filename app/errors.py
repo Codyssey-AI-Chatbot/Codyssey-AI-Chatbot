@@ -18,6 +18,14 @@ class AIErrorCategory(str, Enum):
     UNKNOWN = "unknown"
 
 
+class AIFallbackReason(str, Enum):
+    """Fallback을 호출하지 않은 안전한 내부 사유."""
+
+    DISABLED = "disabled"
+    NOT_CONFIGURED = "not_configured"
+    NON_RETRYABLE = "non_retryable"
+
+
 @dataclass(frozen=True, slots=True)
 class AIProviderFailure:
     """공급자 실패에서 로그에 남겨도 되는 필드만 보관한다.
@@ -53,10 +61,12 @@ class AIError(Exception):
         *,
         failure: AIProviderFailure | None = None,
         attempts: Sequence[AIProviderAttempt] = (),
+        fallback_reason: AIFallbackReason | None = None,
     ) -> None:
         super().__init__(message)
         self.failure = failure
         self.attempts = tuple(attempts)
+        self.fallback_reason = fallback_reason
 
 
 class AIConfigurationError(AIError):
