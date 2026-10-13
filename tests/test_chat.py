@@ -8,8 +8,10 @@ import re
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import httpx
 import httpx2
 import pytest
+from google.genai import errors as genai_errors
 from openai import (
     APIConnectionError,
     APIStatusError,
@@ -20,7 +22,14 @@ from openai import (
 from pydantic import SecretStr
 from sqlalchemy import select
 
-from app.ai_client import AICompletion, ChatMessage, OpenAIChatClient, get_ai_client
+from app.ai_client import (
+    AICompletion,
+    ChatMessage,
+    GeminiChatClient,
+    OpenAIChatClient,
+    get_ai_client,
+    get_gemini_client,
+)
 from app.config import settings
 from app.db import SessionLocal, get_db
 from app.errors import (
@@ -63,6 +72,64 @@ def capture_provider_error(error: Exception):
 
     with pytest.raises((AITimeoutError, AIServiceError)) as caught:
         asyncio.run(call_client())
+    return caught.value
+
+
+class FakeGeminiAsyncClient:
+    def __init__(self, *, result=None, error: Exception | None = None) -> None:
+        self.models = SimpleNamespace(
+            generate_content=AsyncMock(return_value=result, side_effect=error),
+        )
+        self.closed = False
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args) -> None:
+        self.closed = True
+
+
+class FakeGeminiOwner:
+    def __init__(self, async_client: FakeGeminiAsyncClient) -> None:
+        self.aio = async_client
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def make_gemini_client(*, result=None, error: Exception | None = None):
+    async_client = FakeGeminiAsyncClient(result=result, error=error)
+    owner = FakeGeminiOwner(async_client)
+    client = GeminiChatClient(client_factory=lambda: owner, model="test-gemini-model")
+    return client, owner, async_client
+
+
+def make_gemini_api_error(status_code: int) -> genai_errors.APIError:
+    error_type = (
+        genai_errors.ClientError
+        if 400 <= status_code < 500
+        else genai_errors.ServerError
+    )
+    return error_type(
+        status_code,
+        {
+            "error": {
+                "status": "PRIVATE_STATUS",
+                "message": "private Gemini detail with secret-api-key",
+            }
+        },
+    )
+
+
+def capture_gemini_error(error: Exception):
+    client, owner, async_client = make_gemini_client(error=error)
+
+    with pytest.raises((AITimeoutError, AIServiceError)) as caught:
+        asyncio.run(client.complete([ChatMessage(role="user", content="비밀 질문")]))
+
+    assert owner.closed is True
+    assert async_client.closed is True
     return caught.value
 
 
@@ -271,6 +338,191 @@ def test_codyssey_invalid_response_is_retryable(result, exception_type):
     assert failure.retryable is True
     assert failure.status_code is None
     assert failure.exception_type == exception_type
+
+
+def test_gemini_converts_message_roles_order_and_system_instruction(capsys):
+    client, owner, async_client = make_gemini_client(
+        result=SimpleNamespace(text="정상 답변"),
+    )
+    messages = [
+        ChatMessage(role="system", content="첫 번째 시스템 지시"),
+        ChatMessage(role="user", content="첫 질문"),
+        ChatMessage(role="assistant", content="이전 답변"),
+        ChatMessage(role="system", content="두 번째 시스템 지시"),
+        ChatMessage(role="user", content="현재 질문"),
+    ]
+
+    answer = asyncio.run(client.complete(messages))
+
+    assert answer == "정상 답변"
+    call = async_client.models.generate_content.await_args
+    assert call.kwargs["model"] == "test-gemini-model"
+    assert [content.role for content in call.kwargs["contents"]] == [
+        "user",
+        "model",
+        "user",
+    ]
+    assert [content.parts[0].text for content in call.kwargs["contents"]] == [
+        "첫 질문",
+        "이전 답변",
+        "현재 질문",
+    ]
+    assert call.kwargs["config"].system_instruction == [
+        "첫 번째 시스템 지시",
+        "두 번째 시스템 지시",
+    ]
+    assert async_client.closed is True
+    assert owner.closed is True
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert output.err == ""
+    assert "현재 질문" not in output.out + output.err
+    assert "정상 답변" not in output.out + output.err
+    assert "첫 번째 시스템 지시" not in output.out + output.err
+
+
+def test_gemini_factory_reads_settings_and_disables_sdk_retries(monkeypatch):
+    synthetic_key = "fake-gemini-key-for-test"
+    async_client = FakeGeminiAsyncClient(result=SimpleNamespace(text="ok"))
+    owner = FakeGeminiOwner(async_client)
+    constructor_args = {}
+
+    def fake_client_constructor(**kwargs):
+        constructor_args.update(kwargs)
+        return owner
+
+    monkeypatch.setattr(settings, "gemini_api_key", SecretStr(synthetic_key))
+    monkeypatch.setattr(settings, "gemini_model", "configured-test-model")
+    monkeypatch.setattr(settings, "gemini_timeout_seconds", 12.5)
+    monkeypatch.setattr("app.ai_client.genai.Client", fake_client_constructor)
+    get_gemini_client.cache_clear()
+    try:
+        client = get_gemini_client()
+        answer = asyncio.run(
+            client.complete([ChatMessage(role="user", content="설정 확인 질문")])
+        )
+    finally:
+        get_gemini_client.cache_clear()
+
+    assert answer == "ok"
+    assert async_client.models.generate_content.await_args.kwargs["model"] == (
+        "configured-test-model"
+    )
+    assert constructor_args["api_key"] == synthetic_key
+    assert constructor_args["http_options"].timeout == 12_500
+    assert constructor_args["http_options"].retry_options.attempts == 1
+    assert owner.closed is True
+    assert async_client.closed is True
+
+
+@pytest.mark.parametrize("text", [None, "   "])
+def test_gemini_empty_response_is_retryable_invalid_response(text):
+    client, owner, async_client = make_gemini_client(
+        result=SimpleNamespace(text=text),
+    )
+
+    with pytest.raises(AIServiceError) as caught:
+        asyncio.run(client.complete([ChatMessage(role="user", content="질문")]))
+
+    failure = caught.value.failure
+    assert failure is not None
+    assert failure.provider == "gemini"
+    assert failure.category is AIErrorCategory.INVALID_RESPONSE
+    assert failure.retryable is True
+    assert failure.status_code is None
+    assert owner.closed is True
+    assert async_client.closed is True
+
+
+def test_gemini_timeout_is_retryable():
+    request = httpx.Request("POST", "https://provider.invalid/v1/models")
+    sdk_error = httpx.ReadTimeout(
+        "private timeout detail with secret-api-key",
+        request=request,
+    )
+
+    error = capture_gemini_error(sdk_error)
+
+    assert isinstance(error, AITimeoutError)
+    assert error.__cause__ is sdk_error
+    assert error.failure == AIProviderFailure(
+        provider="gemini",
+        category=AIErrorCategory.TIMEOUT,
+        status_code=None,
+        retryable=True,
+        exception_type="ReadTimeout",
+    )
+    assert "secret-api-key" not in str(error)
+    assert "private timeout detail" not in repr(error.failure)
+
+
+def test_gemini_connection_error_is_retryable():
+    request = httpx.Request("POST", "https://provider.invalid/v1/models")
+    error = capture_gemini_error(
+        httpx.ConnectError("private connection detail", request=request)
+    )
+
+    assert isinstance(error, AIServiceError)
+    assert error.failure is not None
+    assert error.failure.category is AIErrorCategory.CONNECTION
+    assert error.failure.retryable is True
+
+
+@pytest.mark.parametrize(
+    ("status_code", "expected_error", "category", "retryable"),
+    [
+        (408, AITimeoutError, AIErrorCategory.TIMEOUT, True),
+        (429, AIServiceError, AIErrorCategory.RATE_LIMIT, True),
+        (500, AIServiceError, AIErrorCategory.UPSTREAM_5XX, True),
+        (503, AIServiceError, AIErrorCategory.UPSTREAM_5XX, True),
+        (400, AIServiceError, AIErrorCategory.UPSTREAM_4XX, False),
+        (401, AIServiceError, AIErrorCategory.CONFIGURATION, False),
+        (403, AIServiceError, AIErrorCategory.CONFIGURATION, False),
+    ],
+)
+def test_gemini_api_errors_are_classified(
+    status_code,
+    expected_error,
+    category,
+    retryable,
+):
+    error = capture_gemini_error(make_gemini_api_error(status_code))
+
+    assert isinstance(error, expected_error)
+    assert error.failure is not None
+    assert error.failure.provider == "gemini"
+    assert error.failure.category is category
+    assert error.failure.status_code == status_code
+    assert error.failure.retryable is retryable
+
+
+def test_gemini_does_not_print_content_key_or_provider_error(capsys):
+    sdk_error = make_gemini_api_error(429)
+
+    error = capture_gemini_error(sdk_error)
+
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert output.err == ""
+    assert "비밀 질문" not in str(error)
+    assert "secret-api-key" not in str(error)
+    assert "PRIVATE_STATUS" not in str(error)
+    assert "private Gemini detail" not in repr(error.failure)
+
+
+@pytest.mark.parametrize(
+    "unexpected_error",
+    [RuntimeError("unexpected Gemini code bug"), asyncio.CancelledError()],
+)
+def test_gemini_unexpected_and_cancelled_errors_are_not_normalized(unexpected_error):
+    client, owner, async_client = make_gemini_client(error=unexpected_error)
+
+    with pytest.raises(type(unexpected_error)) as caught:
+        asyncio.run(client.complete([ChatMessage(role="user", content="질문")]))
+
+    assert caught.value is unexpected_error
+    assert owner.closed is True
+    assert async_client.closed is True
 
 
 class FakeAIClient:
