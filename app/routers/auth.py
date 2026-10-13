@@ -16,6 +16,7 @@ from app.auth import (
     verify_password,
 )
 from app.db import get_db
+from app.logging_conf import log_auth_event
 from app.models import User
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -25,6 +26,11 @@ PASSWORD_MIN_LENGTH = 8
 PASSWORD_MAX_LENGTH = 128
 
 INVALID_CREDENTIALS = AuthError(401, "INVALID_CREDENTIALS", "아이디 또는 비밀번호가 올바르지 않습니다.")
+
+
+def _loggable_username(username: str) -> str | None:
+    """로그에 남겨도 안전한(형식 검증을 통과한) 아이디만 돌려준다. 아니면 None."""
+    return username if USERNAME_PATTERN.fullmatch(username) else None
 
 
 class Credentials(BaseModel):
@@ -42,10 +48,13 @@ class UserOut(BaseModel):
 @router.post("/signup", response_model=UserOut, status_code=201)
 def signup(payload: Credentials, db: Session = Depends(get_db)) -> User:
     if not USERNAME_PATTERN.fullmatch(payload.username):
+        log_auth_event("signup_failed", reason="invalid_username")
         raise AuthError(400, "INVALID_USERNAME", "아이디는 영문, 숫자, 밑줄(_)만 사용해 3~30자로 입력해 주세요.")
     if not PASSWORD_MIN_LENGTH <= len(payload.password) <= PASSWORD_MAX_LENGTH:
+        log_auth_event("signup_failed", username=payload.username, reason="invalid_password")
         raise AuthError(400, "INVALID_PASSWORD", "비밀번호는 8~128자로 입력해 주세요.")
     if db.scalar(select(User).where(User.username == payload.username)) is not None:
+        log_auth_event("signup_failed", username=payload.username, reason="username_taken")
         raise AuthError(409, "USERNAME_TAKEN", "이미 사용 중인 아이디입니다.")
 
     user = User(username=payload.username, password_hash=hash_password(payload.password))
@@ -54,8 +63,10 @@ def signup(payload: Credentials, db: Session = Depends(get_db)) -> User:
         db.commit()
     except IntegrityError:  # 동시에 같은 아이디로 가입한 경우
         db.rollback()
+        log_auth_event("signup_failed", username=payload.username, reason="username_taken")
         raise AuthError(409, "USERNAME_TAKEN", "이미 사용 중인 아이디입니다.")
     db.refresh(user)
+    log_auth_event("signup_success", user_id=user.id, username=user.username)
     return user
 
 
@@ -63,22 +74,28 @@ def signup(payload: Credentials, db: Session = Depends(get_db)) -> User:
 def login(payload: Credentials, request: Request, db: Session = Depends(get_db)) -> User:
     # 너무 긴 비밀번호는 해시 검증(CPU 비용)을 하지 않고 바로 실패 처리한다.
     if len(payload.password) > PASSWORD_MAX_LENGTH:
+        log_auth_event("login_failed", username=_loggable_username(payload.username), reason="password_too_long")
         raise INVALID_CREDENTIALS
 
     user = db.scalar(select(User).where(User.username == payload.username))
     # 아이디가 없어도 더미 해시로 검증해 응답 시간을 맞추고, 오류 문구도 같게 유지한다.
     password_ok = verify_password(payload.password, user.password_hash if user else DUMMY_PASSWORD_HASH)
     if user is None or not password_ok:
+        # 아이디 없음/비밀번호 불일치는 응답과 같이 로그에서도 구분하지 않는다.
+        log_auth_event("login_failed", username=_loggable_username(payload.username), reason="invalid_credentials")
         raise INVALID_CREDENTIALS
 
     request.session.clear()  # 이전 세션 내용을 버리고 새로 시작
     request.session[SESSION_USER_KEY] = user.id
+    log_auth_event("login_success", user_id=user.id)
     return user
 
 
 @router.post("/logout")
 def logout(request: Request) -> dict[str, str]:
+    user_id = request.session.get(SESSION_USER_KEY)
     request.session.clear()
+    log_auth_event("logout", user_id=user_id if isinstance(user_id, int) else None)
     return {"status": "ok"}
 
 

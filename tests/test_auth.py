@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 from fastapi import Depends
 from sqlalchemy import select
@@ -124,3 +126,60 @@ def test_page_dependency_allows_logged_in_user(client):
 
     assert response.status_code == 200
     assert response.json() == {"username": "tester"}
+
+
+def auth_events(caplog) -> list[str]:
+    return [record.getMessage() for record in caplog.records if record.name == "app.auth"]
+
+
+def test_auth_events_are_logged_without_secrets(client, caplog):
+    caplog.set_level(logging.INFO, logger="app.auth")
+
+    signup(client)
+    login(client, password="wrong-password")
+    login(client)
+    client.post("/api/auth/logout")
+
+    messages = auth_events(caplog)
+    assert messages == [
+        "signup_success user_id=1 username=tester",
+        "login_failed username=tester reason=invalid_credentials",
+        "login_success user_id=1",
+        "logout user_id=1",
+    ]
+    joined = " ".join(messages)
+    assert CREDENTIALS["password"] not in joined and "wrong-password" not in joined
+
+
+def test_failed_signup_is_logged_with_reason(client, caplog):
+    signup(client)
+    caplog.set_level(logging.INFO, logger="app.auth")
+    caplog.clear()  # 위의 첫 가입 로그는 검증 대상에서 뺀다
+
+    signup(client)
+    signup(client, username="bad name")
+    signup(client, username="newuser", password="short")
+
+    assert auth_events(caplog) == [
+        "signup_failed username=tester reason=username_taken",
+        "signup_failed reason=invalid_username",
+        "signup_failed username=newuser reason=invalid_password",
+    ]
+
+
+def test_login_log_does_not_contain_unvalidated_username(client, caplog):
+    caplog.set_level(logging.INFO, logger="app.auth")
+
+    login(client, username="fake\nINFO login_success user_id=999")
+
+    messages = auth_events(caplog)
+    assert messages == ["login_failed reason=invalid_credentials"]
+    assert all("\n" not in message for message in messages)
+
+
+def test_logout_without_session_logs_no_user(client, caplog):
+    caplog.set_level(logging.INFO, logger="app.auth")
+
+    client.post("/api/auth/logout")
+
+    assert auth_events(caplog) == ["logout "]
