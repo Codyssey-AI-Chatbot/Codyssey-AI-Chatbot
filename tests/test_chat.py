@@ -44,6 +44,7 @@ from app.errors import (
 )
 from app.main import app
 from app.models import ChatLog, User
+from app.routers.chat import ChatRequest, create_chat
 
 USERNAME = "chat_tester"
 PASSWORD = "correct-horse"
@@ -955,6 +956,10 @@ def chat_event_messages(caplog) -> list[str]:
     return [record.getMessage() for record in caplog.records if record.name == "app.chat"]
 
 
+def chat_event_records(caplog):
+    return [record for record in caplog.records if record.name == "app.chat"]
+
+
 def assert_events_share_request_id(messages: list[str], events: list[str]) -> str:
     assert [message.split(maxsplit=1)[0] for message in messages] == events
     request_ids = []
@@ -1059,7 +1064,7 @@ def test_chat_missing_ai_key_returns_503_without_sensitive_details(
     log_text = "\n".join(messages)
     assert "AI_API_KEY" not in log_text
     assert "AI client is not configured" not in log_text
-    assert "error_type=AIConfigurationError" in log_text
+    assert "exception_type=AIConfigurationError" in log_text
 
 
 def test_chat_success_returns_answer_and_saves_current_user(client, fake_ai):
@@ -1268,6 +1273,316 @@ def test_chat_success_logs_events_without_question_answer_or_key(
     assert api_key not in log_text
 
 
+def test_chat_primary_success_logs_codyssey_attempt(client, caplog):
+    question = "primary 성공 비공개 질문"
+    answer = "primary 성공 비공개 답변"
+    primary = StubProviderClient(answer=answer)
+    fallback = StubProviderClient(answer="호출되면 안 되는 fallback 답변")
+    composite = FallbackAIClient(
+        primary=primary,
+        fallback=fallback,
+        fallback_enabled=True,
+    )
+    app.dependency_overrides[get_ai_client] = lambda: composite
+    caplog.set_level(logging.INFO, logger="app.chat")
+    try:
+        signup_and_login(client)
+        response = client.post("/api/chat", json={"message": question})
+    finally:
+        app.dependency_overrides.pop(get_ai_client, None)
+
+    assert response.status_code == 200
+    messages = chat_event_messages(caplog)
+    assert_events_share_request_id(
+        messages,
+        [
+            "request_received",
+            "ai_call_start",
+            "ai_provider_attempt_start",
+            "ai_provider_attempt_success",
+            "ai_call_success",
+            "db_save_success",
+        ],
+    )
+    attempt_start = messages[2]
+    attempt_success = messages[3]
+    call_success = messages[4]
+    assert "provider=codyssey" in attempt_start
+    assert "attempt=1" in attempt_start
+    assert "provider=codyssey" in attempt_success
+    assert re.search(r"\blatency_ms=\d+\b", attempt_success)
+    assert "provider=codyssey" in call_success
+    assert "fallback_used=false" in call_success
+    assert "attempts=1" in call_success
+    assert fallback.calls == []
+    assert all(record.levelno == logging.INFO for record in chat_event_records(caplog))
+    log_text = "\n".join(messages)
+    assert question not in log_text
+    assert answer not in log_text
+
+
+def test_chat_429_fallback_success_logs_exact_provider_sequence(client, caplog):
+    question = "fallback 성공 비공개 질문"
+    answer = "fallback 성공 비공개 답변"
+    codyssey_key = "codyssey-secret-key-for-log-test"
+    gemini_key = "gemini-secret-key-for-log-test"
+    provider_detail = f"private response body containing {codyssey_key}"
+    primary = StubProviderClient(
+        error=provider_error(
+            provider="codyssey",
+            category=AIErrorCategory.RATE_LIMIT,
+            retryable=True,
+            status_code=429,
+            private_message=provider_detail,
+        )
+    )
+    fallback = StubProviderClient(answer=answer)
+    composite = FallbackAIClient(
+        primary=primary,
+        fallback=fallback,
+        fallback_enabled=True,
+    )
+    app.dependency_overrides[get_ai_client] = lambda: composite
+    caplog.set_level(logging.INFO, logger="app.chat")
+    try:
+        user_id = signup_and_login(client)
+        response = client.post("/api/chat", json={"message": question})
+    finally:
+        app.dependency_overrides.pop(get_ai_client, None)
+
+    assert response.status_code == 200
+    assert response.json()["answer"] == answer
+    messages = chat_event_messages(caplog)
+    assert_events_share_request_id(
+        messages,
+        [
+            "request_received",
+            "ai_call_start",
+            "ai_provider_attempt_start",
+            "ai_provider_attempt_fail",
+            "ai_fallback_start",
+            "ai_provider_attempt_start",
+            "ai_provider_attempt_success",
+            "ai_call_success",
+            "db_save_success",
+        ],
+    )
+    primary_fail = messages[3]
+    fallback_start = messages[4]
+    fallback_success = messages[6]
+    assert "provider=codyssey" in primary_fail
+    assert "attempt=1" in primary_fail
+    assert "error_category=rate_limit" in primary_fail
+    assert "exception_type=SyntheticProviderError" in primary_fail
+    assert "status_code=429" in primary_fail
+    assert "retryable=true" in primary_fail
+    assert re.search(r"\blatency_ms=\d+\b", primary_fail)
+    assert "from_provider=codyssey" in fallback_start
+    assert "to_provider=gemini" in fallback_start
+    assert "provider=gemini" in fallback_success
+    assert "attempt=2" in fallback_success
+    assert re.search(r"\blatency_ms=\d+\b", fallback_success)
+    assert "provider=gemini" in messages[7]
+    assert "fallback_used=true" in messages[7]
+    assert "attempts=2" in messages[7]
+
+    records = chat_event_records(caplog)
+    assert records[3].levelno == logging.WARNING
+    assert records[4].levelno == logging.WARNING
+    assert records[6].levelno == logging.INFO
+    logs = load_chat_logs()
+    assert len(logs) == 1
+    assert logs[0].user_id == user_id
+    assert logs[0].question == question
+    assert logs[0].answer == answer
+    log_text = "\n".join(messages)
+    for private_value in (
+        question,
+        answer,
+        codyssey_key,
+        gemini_key,
+        provider_detail,
+        "response body",
+    ):
+        assert private_value not in log_text
+    assert codyssey_key not in response.text
+    assert gemini_key not in response.text
+    assert provider_detail not in response.text
+
+
+def test_chat_two_provider_failures_log_error_and_do_not_save(client, caplog):
+    question = "두 공급자 실패 비공개 질문"
+    codyssey_key = "codyssey-key-must-not-leak"
+    gemini_key = "gemini-key-must-not-leak"
+    primary = StubProviderClient(
+        error=provider_error(
+            provider="codyssey",
+            category=AIErrorCategory.RATE_LIMIT,
+            retryable=True,
+            status_code=429,
+            private_message=f"private Codyssey detail {codyssey_key}",
+        )
+    )
+    fallback = StubProviderClient(
+        error=provider_error(
+            provider="gemini",
+            category=AIErrorCategory.UPSTREAM_5XX,
+            retryable=True,
+            status_code=503,
+            private_message=f"private Gemini detail {gemini_key}",
+        )
+    )
+    composite = FallbackAIClient(
+        primary=primary,
+        fallback=fallback,
+        fallback_enabled=True,
+    )
+    app.dependency_overrides[get_ai_client] = lambda: composite
+    caplog.set_level(logging.INFO, logger="app.chat")
+    try:
+        signup_and_login(client)
+        response = client.post("/api/chat", json={"message": question})
+    finally:
+        app.dependency_overrides.pop(get_ai_client, None)
+
+    assert response.status_code == 502
+    assert response.json()["error"] == "AI_SERVICE_ERROR"
+    assert load_chat_logs() == []
+    messages = chat_event_messages(caplog)
+    assert_events_share_request_id(
+        messages,
+        [
+            "request_received",
+            "ai_call_start",
+            "ai_provider_attempt_start",
+            "ai_provider_attempt_fail",
+            "ai_fallback_start",
+            "ai_provider_attempt_start",
+            "ai_provider_attempt_fail",
+            "ai_call_fail",
+        ],
+    )
+    assert "provider=gemini" in messages[6]
+    assert "attempt=2" in messages[6]
+    assert "error_category=upstream_5xx" in messages[6]
+    assert "status_code=503" in messages[6]
+    assert "retryable=true" in messages[6]
+    assert "provider=gemini" in messages[7]
+    assert "attempts=2" in messages[7]
+    records = chat_event_records(caplog)
+    assert records[3].levelno == logging.WARNING
+    assert records[4].levelno == logging.WARNING
+    assert records[6].levelno == logging.ERROR
+    assert records[7].levelno == logging.ERROR
+    assert all(record.exc_info is None for record in records)
+    combined_output = "\n".join(messages) + response.text
+    for private_value in (
+        question,
+        codyssey_key,
+        gemini_key,
+        "private Codyssey",
+        "private Gemini",
+    ):
+        assert private_value not in combined_output
+
+
+def test_chat_two_provider_timeouts_keep_504_and_do_not_save(client, caplog):
+    primary = StubProviderClient(
+        error=provider_error(
+            provider="codyssey",
+            category=AIErrorCategory.TIMEOUT,
+            retryable=True,
+            timeout=True,
+        )
+    )
+    fallback = StubProviderClient(
+        error=provider_error(
+            provider="gemini",
+            category=AIErrorCategory.TIMEOUT,
+            retryable=True,
+            timeout=True,
+        )
+    )
+    composite = FallbackAIClient(
+        primary=primary,
+        fallback=fallback,
+        fallback_enabled=True,
+    )
+    app.dependency_overrides[get_ai_client] = lambda: composite
+    caplog.set_level(logging.INFO, logger="app.chat")
+    try:
+        signup_and_login(client)
+        response = client.post("/api/chat", json={"message": "두 timeout 질문"})
+    finally:
+        app.dependency_overrides.pop(get_ai_client, None)
+
+    assert response.status_code == 504
+    assert response.json()["error"] == "AI_TIMEOUT"
+    assert load_chat_logs() == []
+    messages = chat_event_messages(caplog)
+    assert "error_category=timeout" in messages[3]
+    assert "error_category=timeout" in messages[6]
+    assert "attempts=2" in messages[7]
+
+
+def test_chat_unexpected_exception_logs_traceback_and_reraises(client, caplog):
+    private_error_detail = "unexpected internal code failure with private-api-key"
+    unexpected = RuntimeError(private_error_detail)
+    composite = FallbackAIClient(
+        primary=StubProviderClient(error=unexpected),
+        fallback=StubProviderClient(),
+        fallback_enabled=True,
+    )
+    app.dependency_overrides[get_ai_client] = lambda: composite
+    caplog.set_level(logging.INFO, logger="app.chat")
+    try:
+        signup_and_login(client)
+        with pytest.raises(RuntimeError) as caught:
+            client.post("/api/chat", json={"message": "traceback 비공개 질문"})
+    finally:
+        app.dependency_overrides.pop(get_ai_client, None)
+
+    assert caught.value is unexpected
+    records = chat_event_records(caplog)
+    assert [record.getMessage().split(maxsplit=1)[0] for record in records] == [
+        "request_received",
+        "ai_call_start",
+        "ai_call_fail",
+    ]
+    assert records[-1].levelno == logging.ERROR
+    assert records[-1].exc_info is not None
+    assert "exception_type=RuntimeError" in records[-1].getMessage()
+    assert "Traceback (most recent call last)" in caplog.text
+    assert "exception details redacted" in caplog.text
+    assert private_error_detail not in caplog.text
+    assert "traceback 비공개 질문" not in caplog.text
+    assert load_chat_logs() == []
+
+
+def test_chat_router_does_not_catch_base_exception(caplog):
+    abort = ProviderAbort("stop request immediately")
+    ai_client = StubProviderClient(error=abort)
+    caplog.set_level(logging.INFO, logger="app.chat")
+
+    with SessionLocal() as db, pytest.raises(ProviderAbort) as caught:
+        asyncio.run(
+            create_chat(
+                ChatRequest(message="BaseException 비공개 질문"),
+                user=SimpleNamespace(id=999),
+                db=db,
+                ai_client=ai_client,
+            )
+        )
+
+    assert caught.value is abort
+    messages = chat_event_messages(caplog)
+    assert [message.split(maxsplit=1)[0] for message in messages] == [
+        "request_received",
+        "ai_call_start",
+    ]
+    assert "BaseException 비공개 질문" not in "\n".join(messages)
+
+
 def test_chat_db_failure_rolls_back_and_next_request_succeeds(
     client,
     fake_ai,
@@ -1307,3 +1622,9 @@ def test_chat_db_failure_rolls_back_and_next_request_succeeds(
         ["request_received", "ai_call_start", "ai_call_success", "db_save_fail"],
         ["request_received", "ai_call_start", "ai_call_success", "db_save_success"],
     ]
+    db_failure_record = next(
+        record
+        for record in chat_event_records(caplog)
+        if record.getMessage().startswith("db_save_fail ")
+    )
+    assert db_failure_record.levelno == logging.ERROR
