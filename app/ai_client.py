@@ -19,7 +19,12 @@ from openai import (
 )
 
 from app.config import settings
-from app.errors import AIConfigurationError, AIServiceError, AITimeoutError
+from app.errors import (
+    AIConfigurationError,
+    AIProviderAttempt,
+    AIServiceError,
+    AITimeoutError,
+)
 
 
 ChatRole = Literal["system", "user", "assistant"]
@@ -31,6 +36,21 @@ class ChatMessage:
 
     role: ChatRole
     content: str
+
+
+@dataclass(frozen=True, slots=True)
+class AICompletion:
+    """최종 답변과 공급자별 시도 결과.
+
+    F-02에서는 구조만 정의한다. 기존 라우터 호환성을 위해 현재
+    ``AIClient.complete``의 문자열 반환 계약은 유지하며, fallback과 라우터
+    통합 단계에서 이 결과형을 연결한다.
+    """
+
+    text: str
+    provider: str
+    fallback_used: bool
+    attempts: tuple[AIProviderAttempt, ...]
 
 
 class AIClient(Protocol):

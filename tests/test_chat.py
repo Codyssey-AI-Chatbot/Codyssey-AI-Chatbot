@@ -9,15 +9,106 @@ import pytest
 from pydantic import SecretStr
 from sqlalchemy import select
 
-from app.ai_client import ChatMessage, get_ai_client
+from app.ai_client import AICompletion, ChatMessage, get_ai_client
 from app.config import settings
 from app.db import SessionLocal, get_db
-from app.errors import AIServiceError, AITimeoutError
+from app.errors import (
+    AIErrorCategory,
+    AIProviderAttempt,
+    AIProviderFailure,
+    AIServiceError,
+    AITimeoutError,
+)
 from app.main import app
 from app.models import ChatLog, User
 
 USERNAME = "chat_tester"
 PASSWORD = "correct-horse"
+
+
+def test_ai_error_categories_cover_provider_failure_policy():
+    assert {category.value for category in AIErrorCategory} == {
+        "configuration",
+        "timeout",
+        "connection",
+        "rate_limit",
+        "upstream_4xx",
+        "upstream_5xx",
+        "invalid_response",
+        "unknown",
+    }
+
+
+def test_ai_provider_failure_keeps_only_safe_structured_fields():
+    private_detail = "provider response with secret-api-key"
+    failure = AIProviderFailure(
+        provider="codyssey",
+        category=AIErrorCategory.RATE_LIMIT,
+        status_code=429,
+        retryable=True,
+        exception_type="RateLimitError",
+    )
+    failed_attempt = AIProviderAttempt(
+        provider="codyssey",
+        attempt=1,
+        succeeded=False,
+        latency_ms=120,
+        failure=failure,
+    )
+    error = AIServiceError(
+        private_detail,
+        failure=failure,
+        attempts=[failed_attempt],
+    )
+
+    assert error.failure == failure
+    assert error.attempts == (failed_attempt,)
+    assert failure.provider == "codyssey"
+    assert failure.category is AIErrorCategory.RATE_LIMIT
+    assert failure.status_code == 429
+    assert failure.retryable is True
+    assert failure.exception_type == "RateLimitError"
+    assert private_detail not in repr(failure)
+    assert not hasattr(failure, "message")
+    assert not hasattr(failure, "response_body")
+    assert not hasattr(failure, "headers")
+
+
+def test_ai_completion_describes_final_provider_and_attempts():
+    primary_failure = AIProviderFailure(
+        provider="codyssey",
+        category=AIErrorCategory.TIMEOUT,
+        status_code=None,
+        retryable=True,
+        exception_type="APITimeoutError",
+    )
+    attempts = (
+        AIProviderAttempt(
+            provider="codyssey",
+            attempt=1,
+            succeeded=False,
+            latency_ms=20_000,
+            failure=primary_failure,
+        ),
+        AIProviderAttempt(
+            provider="gemini",
+            attempt=2,
+            succeeded=True,
+            latency_ms=1_200,
+        ),
+    )
+
+    completion = AICompletion(
+        text="fallback 답변",
+        provider="gemini",
+        fallback_used=True,
+        attempts=attempts,
+    )
+
+    assert completion.text == "fallback 답변"
+    assert completion.provider == "gemini"
+    assert completion.fallback_used is True
+    assert completion.attempts == attempts
 
 
 class FakeAIClient:
