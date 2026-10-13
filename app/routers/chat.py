@@ -1,5 +1,6 @@
 """인증된 채팅 API 라우터."""
 
+import logging
 from time import perf_counter
 from uuid import uuid4
 
@@ -8,11 +9,17 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.ai_client import AIClient, get_ai_client
+from app.ai_client import AIClient, AICompletion, get_ai_client
 from app.auth import get_current_user
 from app.context import build_chat_messages, get_recent_chat_logs
 from app.db import get_db
-from app.errors import AIConfigurationError, AIServiceError, AITimeoutError
+from app.errors import (
+    AIConfigurationError,
+    AIError,
+    AIProviderAttempt,
+    AIServiceError,
+    AITimeoutError,
+)
 from app.logging_conf import log_chat_event
 from app.models import ChatLog, User
 
@@ -39,6 +46,95 @@ def error_response(status_code: int, code: str, message: str) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
         content={"error": code, "message": message},
+    )
+
+
+def log_provider_attempts(
+    provider_attempts: tuple[AIProviderAttempt, ...],
+    *,
+    request_id: str,
+    user_id: int,
+    call_failed: bool,
+) -> None:
+    """공급자 시도를 원문 데이터 없이 발생 순서대로 기록한다."""
+
+    for index, provider_attempt in enumerate(provider_attempts):
+        log_chat_event(
+            "ai_provider_attempt_start",
+            request_id=request_id,
+            user_id=user_id,
+            provider=provider_attempt.provider,
+            attempt=provider_attempt.attempt,
+        )
+
+        if provider_attempt.succeeded:
+            log_chat_event(
+                "ai_provider_attempt_success",
+                request_id=request_id,
+                user_id=user_id,
+                provider=provider_attempt.provider,
+                attempt=provider_attempt.attempt,
+                latency_ms=provider_attempt.latency_ms,
+            )
+        else:
+            failure = provider_attempt.failure
+            final_failed_attempt = call_failed and index == len(provider_attempts) - 1
+            level = logging.ERROR if final_failed_attempt else logging.WARNING
+            log_chat_event(
+                "ai_provider_attempt_fail",
+                request_id=request_id,
+                user_id=user_id,
+                provider=provider_attempt.provider,
+                attempt=provider_attempt.attempt,
+                error_category=failure.category.value if failure else None,
+                exception_type=failure.exception_type if failure else None,
+                status_code=failure.status_code if failure else None,
+                retryable=failure.retryable if failure else None,
+                latency_ms=provider_attempt.latency_ms,
+                level=level,
+            )
+
+        if index + 1 < len(provider_attempts):
+            next_attempt = provider_attempts[index + 1]
+            log_chat_event(
+                "ai_fallback_start",
+                request_id=request_id,
+                user_id=user_id,
+                from_provider=provider_attempt.provider,
+                to_provider=next_attempt.provider,
+                level=logging.WARNING,
+            )
+
+
+def log_known_ai_failure(
+    error: AIError,
+    *,
+    request_id: str,
+    user_id: int,
+) -> None:
+    """알려진 AI 실패를 원본 예외 메시지와 traceback 없이 기록한다."""
+
+    log_provider_attempts(
+        error.attempts,
+        request_id=request_id,
+        user_id=user_id,
+        call_failed=True,
+    )
+    failure = error.failure
+    log_chat_event(
+        "ai_call_fail",
+        request_id=request_id,
+        user_id=user_id,
+        provider=failure.provider if failure else None,
+        error_category=failure.category.value if failure else None,
+        exception_type=(
+            failure.exception_type if failure else type(error).__name__
+        ),
+        status_code=failure.status_code if failure else None,
+        retryable=failure.retryable if failure else None,
+        fallback_used=len(error.attempts) > 1,
+        attempts=len(error.attempts),
+        level=logging.ERROR,
     )
 
 
@@ -86,11 +182,10 @@ async def create_chat(
     try:
         answer = await ai_client.complete(messages)
     except AIConfigurationError as exc:
-        log_chat_event(
-            "ai_call_fail",
+        log_known_ai_failure(
+            exc,
             request_id=request_id,
             user_id=user.id,
-            error_type=type(exc).__name__,
         )
         return error_response(
             status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -98,11 +193,10 @@ async def create_chat(
             "현재 AI 서비스를 사용할 수 없습니다. 관리자에게 문의해 주세요.",
         )
     except AITimeoutError as exc:
-        log_chat_event(
-            "ai_call_fail",
+        log_known_ai_failure(
+            exc,
             request_id=request_id,
             user_id=user.id,
-            error_type=type(exc).__name__,
         )
         return error_response(
             status.HTTP_504_GATEWAY_TIMEOUT,
@@ -110,11 +204,10 @@ async def create_chat(
             "AI 응답이 지연되고 있습니다. 잠시 후 다시 시도해 주세요.",
         )
     except AIServiceError as exc:
-        log_chat_event(
-            "ai_call_fail",
+        log_known_ai_failure(
+            exc,
             request_id=request_id,
             user_id=user.id,
-            error_type=type(exc).__name__,
         )
         return error_response(
             status.HTTP_502_BAD_GATEWAY,
@@ -126,15 +219,29 @@ async def create_chat(
             "ai_call_fail",
             request_id=request_id,
             user_id=user.id,
-            error_type=type(exc).__name__,
+            exception_type=type(exc).__name__,
+            level=logging.ERROR,
+            exc_info=True,
         )
         raise
     latency_ms = round((perf_counter() - ai_started_at) * 1_000)
+    if isinstance(answer, AICompletion):
+        log_provider_attempts(
+            answer.attempts,
+            request_id=request_id,
+            user_id=user.id,
+            call_failed=False,
+        )
     log_chat_event(
         "ai_call_success",
         request_id=request_id,
         user_id=user.id,
+        provider=answer.provider if isinstance(answer, AICompletion) else None,
         latency_ms=latency_ms,
+        fallback_used=(
+            answer.fallback_used if isinstance(answer, AICompletion) else None
+        ),
+        attempts=len(answer.attempts) if isinstance(answer, AICompletion) else None,
     )
 
     chat_log = ChatLog(user_id=user.id, question=payload.message, answer=answer)
@@ -147,7 +254,8 @@ async def create_chat(
             "db_save_fail",
             request_id=request_id,
             user_id=user.id,
-            error_type=type(exc).__name__,
+            exception_type=type(exc).__name__,
+            level=logging.ERROR,
         )
         try:
             db.rollback()

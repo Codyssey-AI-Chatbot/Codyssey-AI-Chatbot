@@ -5,7 +5,7 @@
 - **배포 URL**: https://codyssey-ai-chatbot.onrender.com (Render 무료 플랜이라 15분 미사용 시 잠들며, 깨어나는 첫 접속은 약 1분 걸립니다. 상태 확인은 [`/health`](https://codyssey-ai-chatbot.onrender.com/health))
 - **Render 대시보드**: [codyssey-ai-chatbot 서비스](https://dashboard.render.com/web/srv-db4teg5ckfvc7386rcug) — 왼쪽 메뉴의 Logs(서버 로그), Events(배포 이력), Environment(환경 변수). Render 계정 권한이 있는 팀원만 열 수 있습니다
 - **저장소**: https://github.com/Codyssey-AI-Chatbot/Codyssey-AI-Chatbot
-- **기술 스택**: Python 3.10, FastAPI, SQLAlchemy 2, SQLite, Jinja2, OpenAI Python SDK(OpenAI 호환 API), pytest
+- **기술 스택**: Python 3.10, FastAPI, SQLAlchemy 2, SQLite, Jinja2, OpenAI Python SDK(Codyssey OpenAI 호환 API), Google Gen AI SDK(Gemini fallback), pytest
 - **발표 준비 문서**: [요구사항·제약 사항 대응 설명서](docs/requirements-mapping.md) · [동시 접속·장애 대비 개선안](docs/scaling-improvements.md) · [퍼실 문답 예상 Q&A](docs/facilitator-qna.md) · [C 역할 작업 설명서](docs/role-c-walkthrough.md) · [팀 역할 분담과 협업 규칙](docs/team-roles.md)
 
 ## 목차
@@ -44,7 +44,7 @@
 1. **가입과 로그인**: `/signup` 에서 가입 → `/login` 에서 로그인 → 세션 쿠키가 발급되어 `/chat` 으로 이동한다. 로그인하지 않으면 `/chat`, `/history` 는 `/login` 으로 보내고, `POST /api/chat` 은 `401` 을 돌려준다.
 2. **질문과 답변**: 채팅 화면에서 질문을 보내면 서버가 AI API 를 호출하고, 답변이 같은 화면에 말풍선으로 추가된다. 서버는 질문·답변을 `chat_logs` 에 저장한다.
 3. **문맥 유지**: 서버는 같은 사용자의 **최근 5개 대화**를 함께 AI 에 전달한다. "내가 방금 뭘 물어봤지?" 같은 질문에 이어서 답할 수 있다.
-4. **실패 안내**: AI 가 20초 안에 답하지 않거나 오류를 내면 서비스는 죽지 않고 `AI_TIMEOUT` / `AI_SERVICE_ERROR` 안내를 화면에 보여 준다. 실패한 대화는 저장하지 않는다.
+4. **공급자 장애 대응과 실패 안내**: Codyssey가 일시적인 오류를 내면 Gemini를 fallback으로 최대 한 번 호출한다. 두 공급자 모두 실패하면 `AI_TIMEOUT` / `AI_SERVICE_ERROR` 안내를 화면에 보여 주며, 실패한 대화는 저장하지 않는다.
 5. **기록 조회와 확인**: 사용자는 `/history` 화면과 `GET /api/me/chats` 로 자신의 로그만 본다. 운영자는 비밀번호로 보호된 관리자 페이지 `/admin` 이나 `scripts/check_logs.sql` 로 모든 사용자의 로그를 확인한다.
 
 ### 과제 요구사항 대응표
@@ -53,7 +53,7 @@
 |---|---|---|---|
 | 1 | 웹 UI (질문 입력, 같은 화면에서 응답 확인) | `/chat` 페이지 + `chat.js` (fetch 로 호출, 말풍선 추가) | C |
 | 2 | 사용자 인증 및 접근 제어 | 회원가입/로그인/로그아웃 API, 세션 쿠키, `get_current_user`(401) / `get_current_user_or_redirect`(303) | A |
-| 3 | AI 챗봇 처리 (서버에서 AI 호출, 컨텍스트 전략) | `ai_client.py`(OpenAI 호환 API, 타임아웃), `context.py`(최근 5개) | B |
+| 3 | AI 챗봇 처리 (서버에서 AI 호출, 컨텍스트 전략) | `ai_client.py`(Codyssey primary, Gemini fallback, 공급자별 타임아웃), `context.py`(최근 5개) | B |
 | 4 | 대화 로그 저장 및 조회/추적 | `ChatLog(user_id, question, answer, created_at)` 저장(B), `GET /api/me/chats`·`/history`·관리자 페이지 `/admin`·SQL(C) | A·B·C |
 | 5 | 운영 및 유지보수 (로그/예외/입력 검증) | `request_received` → `ai_call_*` → `db_save_*` 로그, 에러 코드 응답, 빈 입력·2,000자 제한 | B |
 | 6 | 배포 및 접근성 | Render Blueprint(`render.yaml`), 이 문서의 배포/환경 변수 절 | C |
@@ -78,7 +78,7 @@ flowchart LR
         AUTH["routers/auth.py + auth.py<br/>회원가입·로그인·세션 (A)"]
         CHAT["routers/chat.py<br/>검증 → 컨텍스트 → AI → 저장 (B)"]
         LOGS["routers/logs.py<br/>내 로그 조회 (C)"]
-        AI["ai_client.py / context.py<br/>OpenAI 호환 클라이언트, 최근 5개 (B)"]
+        AI["ai_client.py / context.py<br/>Codyssey primary + Gemini fallback, 최근 5개 (B)"]
         LOG["logging_conf.py<br/>request_id 기반 이벤트 로그 (B)"]
     end
 
@@ -87,20 +87,22 @@ flowchart LR
         CHATLOGS[("chat_logs")]
     end
 
-    EXT["Codyssey OpenAI 호환 API<br/>copa.codyssey.kr/v1"]
+    PRIMARY["Codyssey OpenAI 호환 API<br/>primary"]
+    FALLBACK["Google Gemini API<br/>fallback"]
 
     UI -- "HTML" --> PAGES
     UI -- "JSON /api/auth/*" --> AUTH
     UI -- "JSON POST /api/chat" --> CHAT
     UI -- "JSON GET /api/me/chats" --> LOGS
     AUTH --> USERS
-    CHAT --> AI --> EXT
+    CHAT --> AI --> PRIMARY
+    AI -. "일시적 실패일 때 최대 1회" .-> FALLBACK
     CHAT --> CHATLOGS
     CHAT --> LOG
     LOGS --> CHATLOGS
 ```
 
-AI API 키는 서버의 환경 변수에만 있고, 브라우저는 `/api/chat` 의 결과 텍스트만 받습니다.
+두 AI API 키는 서버의 환경 변수에만 있고, 브라우저는 `/api/chat`의 결과 텍스트만 받습니다.
 
 ### 채팅 요청 처리 흐름
 
@@ -109,24 +111,37 @@ sequenceDiagram
     participant U as 브라우저 (chat.js)
     participant R as routers/chat.py
     participant DB as SQLite
-    participant AI as AI API
+    participant C as Codyssey (primary)
+    participant G as Gemini (fallback)
 
     U->>R: POST /api/chat {"message": "..."} (세션 쿠키)
     Note over R: request_received (request_id 발급)
     R->>R: 로그인 확인 (401) · 빈 입력/2,000자 검증 (400 INVALID_MESSAGE)
     R->>DB: 최근 대화 5개 조회 (user_id 기준)
     Note over R: ai_call_start
-    R->>AI: chat.completions (과거 Q/A 5쌍 + 현재 질문, timeout 20s)
-    alt 성공
-        AI-->>R: 답변
+    R->>C: 과거 Q/A 5쌍 + 현재 질문 (timeout 20s)
+    alt Codyssey 성공
+        C-->>R: 답변
+        Note over R: provider=codyssey, fallback_used=false
+    else fallback 가능한 Codyssey 실패
+        C-->>R: timeout / connection / 408 / 429 / 5xx / 빈 응답
+        R->>G: 같은 메시지를 한 번 전달 (timeout 20s)
+        alt Gemini 성공
+            G-->>R: 답변
+            Note over R: provider=gemini, fallback_used=true
+        else Gemini도 실패
+            G-->>R: timeout / error
+            R-->>U: 504 AI_TIMEOUT / 502 AI_SERVICE_ERROR (저장 안 함)
+        end
+    else fallback 제외 오류
+        C-->>R: 400 / 401 / 403 / 설정 오류
+        R-->>U: 502 또는 503 (저장 안 함)
+    end
+    opt 최종 답변 성공
         Note over R: ai_call_success latency_ms=…
         R->>DB: INSERT chat_logs(user_id, question, answer)
         Note over R: db_save_success chat_id=…
         R-->>U: 200 {"answer": "...", "chat_id": 12}
-    else 타임아웃 / 실패
-        AI-->>R: timeout / error
-        Note over R: ai_call_fail error_type=…
-        R-->>U: 504 AI_TIMEOUT / 502 AI_SERVICE_ERROR (저장 안 함)
     end
 ```
 
@@ -140,11 +155,11 @@ sequenceDiagram
 | `app/models.py` | `User`, `ChatLog` 테이블 정의 | A |
 | `app/auth.py` | argon2 비밀번호 해싱, `AuthError`, 로그인 확인 의존성 2종 | A |
 | `app/routers/auth.py` | `POST /api/auth/signup`, `/login`, `/logout`, `GET /api/auth/me` | A |
-| `app/ai_client.py` | 공급자 독립 `AIClient` 인터페이스와 OpenAI 호환 구현, 타임아웃·오류 변환 | B |
+| `app/ai_client.py` | 공급자 독립 `AIClient`, Codyssey·Gemini 구현, 오류 정규화와 최대 1회 fallback 조합 | B |
 | `app/context.py` | 사용자의 최근 N개(기본 5) 대화를 시간순 메시지로 구성 | B |
 | `app/routers/chat.py` | `POST /api/chat`: 검증 → 컨텍스트 → AI 호출 → 저장, 단계별 로그와 에러 코드 응답 | B |
-| `app/logging_conf.py` | 민감정보를 제외한 `key=value` 이벤트 로그 (`app.chat` 로거) | B |
-| `app/errors.py` | `AITimeoutError`, `AIServiceError` | B |
+| `app/logging_conf.py` | 민감정보를 제외한 공급자별 `key=value` 이벤트 로그 (`app.chat` 로거) | B |
+| `app/errors.py` | AI 설정·타임아웃·서비스 예외와 공급자 실패/시도 메타데이터 | B |
 | `app/routers/pages.py` | `/`, `/signup`, `/login`, `/chat`, `/history`, `/admin` 템플릿 렌더링, 관리자 인증 | C |
 | `app/routers/logs.py` | `GET /api/me/chats` 내 로그 조회, 관리자 화면용 전체 조회 함수 | C |
 | `app/templates/`, `app/static/` | Jinja2 템플릿, CSS, `auth.js`(폼 전송), `chat.js`(채팅), `logout.js`(로그아웃) | C |
@@ -228,9 +243,9 @@ sequenceDiagram
 | 401 | `INVALID_CREDENTIALS` | 아이디 또는 비밀번호 불일치 (어느 쪽인지 알려주지 않음) |
 | 401 | `UNAUTHORIZED` | 로그인이 필요한 API 를 비로그인으로 호출 |
 | 400 | `INVALID_MESSAGE` | 빈 메시지 또는 2,000자 초과 |
-| 504 | `AI_TIMEOUT` | AI API 가 `AI_TIMEOUT_SECONDS`(기본 20초) 안에 응답하지 않음 |
-| 502 | `AI_SERVICE_ERROR` | AI API 연결 실패, 오류 상태 코드, 빈 응답 |
-| 503 | `AI_NOT_CONFIGURED` | 서버에 `AI_API_KEY` 가 설정되지 않음 (입력 검증을 통과한 요청에만) |
+| 504 | `AI_TIMEOUT` | 실행된 모든 공급자 시도가 timeout으로 끝남 |
+| 502 | `AI_SERVICE_ERROR` | fallback 제외 오류 또는 최종 공급자까지 실패함(모두 timeout인 경우 제외) |
+| 503 | `AI_NOT_CONFIGURED` | primary용 `AI_API_KEY`가 설정되지 않음 (입력 검증을 통과한 요청에만) |
 | 500 | `DB_SAVE_ERROR` | 답변은 받았지만 DB 저장 실패 (롤백 후 응답) |
 | 422 | (FastAPI 기본) | 요청 본문/쿼리 형식 오류 (예: `limit=0`) |
 
@@ -381,7 +396,7 @@ erDiagram
 
 ## 5. 실행 방법 (로컬)
 
-사전 준비: Python 3.10 이상, Git, Codyssey 에서 발급받은 AI API 키.
+사전 준비: Python 3.10 이상, Git, Codyssey에서 발급받은 primary API 키. Gemini fallback을 사용하려면 Gemini API 키도 준비합니다.
 
 ```bash
 git clone https://github.com/Codyssey-AI-Chatbot/Codyssey-AI-Chatbot.git
@@ -394,7 +409,7 @@ pip install -r requirements.txt
 cp .env.example .env                 # Windows PowerShell: Copy-Item .env.example .env
 ```
 
-`.env` 를 열어 두 값을 채웁니다. 나머지는 기본값으로 동작합니다.
+`.env` 를 열어 `SECRET_KEY`와 Codyssey 키를 채웁니다. Gemini fallback을 사용하려면 Gemini 키도 추가합니다. 나머지는 `.env.example`의 기본값으로 동작합니다.
 
 ```bash
 # SECRET_KEY 생성 (출력된 값을 .env 의 SECRET_KEY= 에 붙여 넣기)
@@ -404,6 +419,7 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 ```dotenv
 SECRET_KEY=<위에서 생성한 값>
 AI_API_KEY=<발급받은 키>
+GEMINI_API_KEY=<Gemini fallback을 사용할 때 발급받은 키>
 ```
 
 서버 실행:
@@ -419,7 +435,7 @@ uvicorn app.main:app --reload
 테스트:
 
 ```bash
-python -m pytest -q        # 60 passed
+python -m pytest -q        # 139 passed
 ```
 
 테스트는 임시 디렉터리의 별도 SQLite 파일과 가짜 AI 클라이언트를 사용하므로, 내 `.env`, `app.db`, 실제 AI API 에 영향을 주지 않습니다.
@@ -434,7 +450,7 @@ python -m pytest -q        # 60 passed
 
 1. [Render](https://render.com) 에 가입하고 GitHub 계정을 연결합니다. 조직 저장소라면 Render GitHub App 에 `Codyssey-AI-Chatbot` 조직 접근을 허용합니다.
 2. Dashboard → **New** → **Blueprint** → 이 저장소 선택. Render 가 `render.yaml` 을 읽어 웹 서비스 1개를 제안합니다.
-3. `AI_API_KEY` 입력란이 나타나면 발급받은 키를 넣습니다. (`sync: false` 로 선언되어 저장소에는 없고 Render 에만 저장됩니다.) `SECRET_KEY` 와 `ADMIN_PASSWORD`(관리자 페이지 비밀번호)는 Render 가 임의 값으로 생성합니다.
+3. `AI_API_KEY`와 `GEMINI_API_KEY` 입력란에 각 공급자에서 발급받은 키를 직접 넣습니다. 두 항목은 `sync: false`라 저장소에 값이 기록되지 않고 Render Environment에만 저장됩니다. `SECRET_KEY`와 `ADMIN_PASSWORD`(관리자 페이지 비밀번호)는 Render가 임의 값으로 생성합니다.
 4. **Apply** 를 누르면 빌드(`pip install -r requirements.txt`) → 기동(`uvicorn app.main:app --host 0.0.0.0 --port $PORT`) → 헬스체크(`/health`) 순서로 진행됩니다.
 5. 배포가 끝나면 `https://<서비스이름>.onrender.com/health` 가 `{"status":"ok"}` 를 돌려줍니다. 이 URL 을 이 문서 맨 위 **배포 URL** 에 적습니다.
 
@@ -459,7 +475,10 @@ python -m pytest -q        # 60 passed
 | `PYTHON_VERSION` | `3.10.11` | 로컬 개발·테스트와 동일 |
 | `SECRET_KEY` | `generateValue: true` | Render 가 생성 |
 | `ADMIN_PASSWORD` | `generateValue: true` | Render 가 생성. 대시보드 Environment 탭에서 확인 |
-| `AI_API_KEY` | `sync: false` | Apply 때 직접 입력 |
+| `AI_API_KEY` / `GEMINI_API_KEY` | `sync: false` | Apply 또는 Environment 탭에서 실제 키를 직접 입력 |
+| `GEMINI_MODEL` | `gemini-3.8-flash` | fallback 모델 |
+| `GEMINI_TIMEOUT_SECONDS` | `"20"` | Gemini 호출 제한 시간 |
+| `AI_FALLBACK_ENABLED` | `"true"` | Codyssey의 일시적 실패에 Gemini fallback 허용 |
 | `SESSION_COOKIE_SECURE` | `"true"` | Render 는 HTTPS 이므로 Secure 쿠키 |
 | 그 외 `AI_*`, `DATABASE_URL` | `.env.example` 과 동일 | |
 
@@ -511,11 +530,17 @@ sudo systemctl status chatbot          # 로그: journalctl -u chatbot -f
 | `AI_API_KEY` | 채팅에 필요 | 없음 | AI API 키. 없으면 인증·화면은 동작하지만 `POST /api/chat` 은 `503 AI_NOT_CONFIGURED` 를 돌려줌 |
 | `AI_BASE_URL` | 아니오 | `https://copa.codyssey.kr/v1` | OpenAI 호환 API 주소 |
 | `AI_MODEL` | 아니오 | `gpt-5.4` | 모델 이름 |
-| `AI_TIMEOUT_SECONDS` | 아니오 | `20` | AI 호출 제한 시간(초). 초과 시 `504 AI_TIMEOUT` |
+| `AI_TIMEOUT_SECONDS` | 아니오 | `20` | Codyssey 한 번의 호출 제한 시간(초) |
+| `GEMINI_API_KEY` | fallback에 필요 | 없음 | Gemini API 키. 비어 있으면 Gemini를 호출하지 않고 primary 실패 의미를 유지 |
+| `GEMINI_MODEL` | fallback에 필요 | 없음 (`.env.example`: `gemini-3.8-flash`) | Gemini fallback 모델 이름 |
+| `GEMINI_TIMEOUT_SECONDS` | 아니오 | `20` | Gemini 호출 제한 시간(초) |
+| `AI_FALLBACK_ENABLED` | 아니오 | `true` | `true`일 때만 fallback 가능한 Codyssey 실패 후 Gemini를 최대 한 번 호출 |
 | `DATABASE_URL` | 아니오 | `sqlite:///./app.db` | SQLAlchemy DB URL |
 | `SESSION_MAX_AGE_SECONDS` | 아니오 | `86400` (1일) | 세션 쿠키 수명 |
 | `SESSION_COOKIE_SECURE` | 아니오 | `false` | HTTPS 환경에서만 `true`. HTTP 에서 `true` 면 로그인 불가 |
 | `ADMIN_PASSWORD` | 아니오 | 없음 | 관리자 페이지 `/admin` 의 비밀번호(사용자명은 `admin`). 비어 있으면 관리자 페이지가 꺼집니다(`404`) |
+
+Render에서는 Blueprint Apply 때 입력하거나 서비스 페이지의 **Environment → Add Environment Variable**에서 `GEMINI_API_KEY`를 추가한 뒤 저장하여 재배포합니다. 값은 Render 대시보드에만 직접 입력하고 README, `render.yaml`, 이슈, PR 본문에는 적지 않습니다.
 
 Render 전용: `PYTHON_VERSION`(런타임 버전), `PORT`(Render 가 주입, 시작 명령에서 사용).
 
@@ -525,11 +550,11 @@ Render 전용: `PYTHON_VERSION`(런타임 버전), `PORT`(Render 가 주입, 시
 
 - **코드와 문서에 비밀 값이 없습니다.** API 키, 비밀번호, 세션 키는 모두 환경 변수(`.env`)로만 다룹니다. 저장소에는 값이 비어 있는 [`.env.example`](.env.example) 만 있습니다.
 - **`.gitignore`** 가 `.env`, `.env.*`(단 `.env.example` 은 허용), `*.db` 를 제외해 비밀 값과 로컬 DB 가 커밋되지 않습니다.
-- **AI API 키는 서버에만 있습니다.** 브라우저는 `/api/chat` 의 답변 텍스트만 받고, 키나 AI API 주소를 전혀 알 수 없습니다.
+- **두 AI API 키는 서버에만 있습니다.** 브라우저는 `/api/chat`의 답변 텍스트만 받고 Codyssey/Gemini 키나 공급자 요청을 알 수 없습니다.
 - **비밀번호는 argon2 해시로만 저장**하고, 로그인 실패 시 아이디 존재 여부를 응답 문구나 응답 시간으로 드러내지 않습니다.
 - **관리자 페이지**는 모든 사용자의 대화를 보여 주므로 `ADMIN_PASSWORD` 로 보호합니다. 값은 저장소에 없고(Render 가 생성), 화면에는 비밀번호 해시 원문 대신 방식 이름만 표시합니다.
 - **세션 쿠키**는 서명되어 위조할 수 없고 `HttpOnly`, `SameSite=Lax`, HTTPS 에서는 `Secure` 로 발급됩니다.
-- **서버 로그에는 질문·답변 전문, API 키, 쿠키를 남기지 않습니다.** `request_id`, `user_id`, 이벤트 이름, 지연 시간, 오류 타입만 기록합니다.
+- **서버 로그에는 질문·답변 전문, API 키, Authorization 헤더, 쿠키, 공급자 요청·응답 본문, SDK 원본 오류 문자열을 남기지 않습니다.** 대신 `request_id`, `user_id`, 공급자, 시도 번호, 안전하게 분류한 오류 범주·상태 코드·예외 타입, 재시도 가능 여부, 지연 시간만 기록합니다.
 - PR 템플릿 체크리스트에 "비밀 값이 코드·문서에 없다" 항목을 두어 리뷰 때마다 확인합니다.
 
 ---
@@ -538,44 +563,75 @@ Render 전용: `PYTHON_VERSION`(런타임 버전), `PORT`(Render 가 주입, 시
 
 ### 서버 로그 이벤트
 
-`POST /api/chat` 요청 하나는 `request_id` 하나로 묶여 다음 이벤트를 남깁니다 (`app.chat` 로거, INFO).
+`POST /api/chat` 요청 하나는 UUID 기반 `request_id` 하나로 묶입니다. 정상 시도와 성공은 `INFO`, fallback 가능한 공급자 실패와 fallback 시작은 `WARNING`, 최종 AI 실패와 DB 저장 실패는 `ERROR`로 기록합니다.
 
 ```text
 INFO request_received request_id=3f2a9c1e5b7d4e0f8a6b2c4d9e1f0a7b user_id=1 path=/api/chat
 INFO ai_call_start request_id=3f2a9c1e5b7d4e0f8a6b2c4d9e1f0a7b user_id=1
-INFO ai_call_success request_id=3f2a9c1e5b7d4e0f8a6b2c4d9e1f0a7b user_id=1 latency_ms=1240
+INFO ai_provider_attempt_start request_id=3f2a9c1e5b7d4e0f8a6b2c4d9e1f0a7b user_id=1 provider=codyssey attempt=1
+INFO ai_provider_attempt_success request_id=3f2a9c1e5b7d4e0f8a6b2c4d9e1f0a7b user_id=1 provider=codyssey attempt=1 latency_ms=1240
+INFO ai_call_success request_id=3f2a9c1e5b7d4e0f8a6b2c4d9e1f0a7b user_id=1 provider=codyssey latency_ms=1240 fallback_used=false attempts=1
 INFO db_save_success request_id=3f2a9c1e5b7d4e0f8a6b2c4d9e1f0a7b user_id=1 chat_id=12
 ```
 
-실패했을 때:
+Codyssey 429 뒤 Gemini가 성공한 예시는 다음과 같습니다. 실제 공급자 오류 문구 대신 안전한 분류값만 남습니다.
 
 ```text
-INFO ai_call_fail request_id=... user_id=1 error_type=AITimeoutError      # AI 타임아웃 → 504
-INFO ai_call_fail request_id=... user_id=1 error_type=AIServiceError      # AI 오류 → 502
-INFO db_save_fail request_id=... user_id=1 error_type=OperationalError    # DB 저장 실패 → 500 (롤백)
+WARNING ai_provider_attempt_fail request_id=... user_id=1 provider=codyssey attempt=1 error_category=rate_limit exception_type=RateLimitError status_code=429 retryable=true latency_ms=320
+WARNING ai_fallback_start request_id=... user_id=1 from_provider=codyssey to_provider=gemini
+INFO ai_provider_attempt_start request_id=... user_id=1 provider=gemini attempt=2
+INFO ai_provider_attempt_success request_id=... user_id=1 provider=gemini attempt=2 latency_ms=810
+INFO ai_call_success request_id=... user_id=1 provider=gemini latency_ms=1130 fallback_used=true attempts=2
 ```
 
 | 이벤트 | 의미 |
 |---|---|
 | `request_received` | 질문 수신 |
 | `ai_call_start` | AI API 호출 시작 |
-| `ai_call_success` / `ai_call_fail` | AI 응답 수신 (지연 시간) / 실패 (오류 타입) |
+| `ai_provider_attempt_start` | 공급자별 시도 시작 (`provider`, `attempt`) |
+| `ai_provider_attempt_success` / `ai_provider_attempt_fail` | 공급자별 성공 또는 안전하게 정규화한 실패 정보와 지연 시간 |
+| `ai_fallback_start` | Codyssey에서 Gemini로 전환 (`from_provider`, `to_provider`) |
+| `ai_call_success` / `ai_call_fail` | 전체 AI 호출의 최종 결과, 최종 공급자, fallback 사용 여부와 총 시도 수 |
 | `db_save_success` / `db_save_fail` | 대화 로그 저장 성공 (`chat_id`) / 실패 |
+
+허용되는 구조화 필드는 `request_id`, `user_id`, `path`, `provider`, `attempt`, `from_provider`, `to_provider`, `error_category`, `exception_type`, `status_code`, `retryable`, `latency_ms`, `fallback_used`, `attempts`, `chat_id`입니다. 질문·답변 전문과 키·헤더·쿠키·공급자 body·SDK 원본 예외 문자열은 로그 함수의 입력 필드 자체로 받지 않습니다.
 
 로그는 로컬에서는 `uvicorn` 콘솔에, Render 에서는 [서비스 대시보드](https://dashboard.render.com/web/srv-db4teg5ckfvc7386rcug)의 **Logs** 탭에 보입니다. uvicorn 의 접근 로그(`"POST /api/chat HTTP/1.1" 200 OK`)도 함께 남습니다.
 
-### 예외 처리
+### fallback, timeout, 예외 처리
+
+Codyssey가 primary이고 Gemini가 fallback입니다. 같은 공급자를 자동 재시도하지 않으며, 한 요청에서 Codyssey 한 번과 조건을 만족할 때 Gemini 한 번까지 호출합니다.
+
+| Codyssey 결과 | Gemini fallback | 이유 |
+|---|---|---|
+| 성공 | 실행 안 함 | 첫 답변을 바로 사용 |
+| timeout, 연결 실패, HTTP 408, 429, 5xx, 빈 응답 | 설정·활성화된 경우 1회 실행 | 일시적이거나 다른 공급자에서 회복할 가능성이 있는 실패 |
+| HTTP 400, 401, 403, 설정 오류 | 실행 안 함 | 잘못된 요청·권한·설정 문제는 공급자를 바꿔 숨기지 않음 |
+| 예상하지 못한 `Exception` 또는 `BaseException` 계층 | 실행 안 함 | 코드 버그와 프로세스 제어 신호를 장애 fallback으로 오인하지 않음 |
+
+Codyssey와 Gemini의 기본 timeout은 각각 20초입니다. 두 호출은 순차 실행되므로, Codyssey가 timeout된 뒤 Gemini도 timeout되면 **공급자 대기 시간은 최악의 경우 약 40초**이며 애플리케이션 처리와 네트워크 오버헤드가 조금 더 붙을 수 있습니다. 이것은 요청 전체에 대한 별도의 40초 hard timeout이 아닙니다.
 
 | 상황 | 서버 처리 | 사용자에게 |
 |---|---|---|
-| AI API 가 제한 시간(기본 20초) 안에 응답하지 않음 | `AITimeoutError` 로 변환, `ai_call_fail` 기록, 저장 안 함 | `504 AI_TIMEOUT` → 채팅 화면에 "AI 응답이 지연되고 있습니다. … (error: AI_TIMEOUT)" |
-| AI API 연결 실패, 오류 상태 코드, 빈 응답 | `AIServiceError` 로 변환, `ai_call_fail` 기록 | `502 AI_SERVICE_ERROR` |
-| 서버에 `AI_API_KEY` 가 없음 | AI 호출 시점에 `AIConfigurationError`, `ai_call_fail` 기록, 저장 안 함 | `503 AI_NOT_CONFIGURED` |
+| 실행된 Codyssey와 Gemini 시도가 모두 timeout | `AITimeoutError`, 공급자별 실패와 `ai_call_fail` 기록, 저장 안 함 | `504 AI_TIMEOUT` |
+| fallback 제외 오류 또는 Gemini까지 일반 실패 | `AIServiceError`, 공급자별 실패와 `ai_call_fail` 기록, 저장 안 함 | `502 AI_SERVICE_ERROR` |
+| 서버에 primary용 `AI_API_KEY`가 없음 | 호출 시점에 `AIConfigurationError`, Gemini를 호출하지 않고 저장 안 함 | `503 AI_NOT_CONFIGURED` |
+| Gemini 키·모델이 없거나 fallback이 비활성화됨 | Gemini를 호출하지 않고 Codyssey의 원래 timeout/서비스 오류 의미 유지 | 원래 primary 오류에 따라 `504` 또는 `502` |
 | 답변은 받았지만 DB 저장 실패 | 롤백, `db_save_fail` 기록. 다음 요청은 정상 처리 | `500 DB_SAVE_ERROR` |
 | 비로그인 호출 | `AuthError` → JSON | `401 UNAUTHORIZED`. 화면은 `/login` 으로 이동 |
 | 공급자 내부 오류 메시지, 스택 트레이스 | 응답에 포함하지 않음 | 일관된 `{"error", "message"}` 만 |
 
-어떤 경우에도 서버 프로세스는 종료되지 않고 다음 요청을 받습니다. 채팅 화면은 전송 중 입력을 잠그고 로딩 문구를 보여 주며, 실패하면 오류 말풍선에 에러 코드를 함께 표시합니다.
+`BaseException`은 잡지 않습니다. `KeyboardInterrupt`, `SystemExit`, `GeneratorExit` 같은 종료·제어 신호까지 일반 AI 장애로 바꾸면 서버가 정상적으로 종료되거나 상위 실행 환경이 신호를 처리하는 것을 방해하기 때문입니다. 예상하지 못한 일반 `Exception`도 fallback으로 숨기지 않고, 질문·답변·키를 제외한 예외 타입과 정제된 traceback을 `ERROR`로 남긴 뒤 다시 올립니다.
+
+채팅 화면은 전송 중 입력을 잠그고 로딩 문구를 보여 주며, 알려진 실패는 오류 말풍선에 에러 코드를 함께 표시합니다.
+
+### 현재 한계
+
+- 두 공급자가 동시에 다운되거나 네트워크가 완전히 끊기고, 두 공급자의 quota가 모두 소진된 경우에는 자동 fallback으로 복구할 수 없습니다.
+- 순차 fallback이라 primary 실패를 기다린 뒤 fallback을 시작하므로 정상 primary 호출보다 응답이 늦어질 수 있습니다.
+- 같은 공급자 재시도, 지수 backoff, circuit breaker, 공급자 상태 점검, 응답 캐시, 비용·품질 기반 다중 provider 라우팅은 구현하지 않았습니다.
+- primary의 400/401/403·설정 오류는 운영자가 요청·권한·환경 변수를 바로잡아야 하며 Gemini로 우회하지 않습니다.
+- 프로세스 메모리의 `lru_cache`는 클라이언트 객체 재사용용일 뿐 답변 캐시가 아닙니다. 배포 후 환경 변수를 바꾸면 프로세스를 재시작해야 새 설정이 반영됩니다.
 
 ### 입력 검증
 
@@ -746,16 +802,16 @@ docs/<내용>            ← 문서 작업 브랜치
 ## 13. 테스트
 
 ```bash
-python -m pytest -q        # 60 passed
+python -m pytest -q        # 139 passed
 ```
 
 | 파일 | 개수 | 확인하는 것 | 작성 |
 |---|---|---|---|
-| `tests/test_auth.py` | 16 | 가입(해시 저장, 중복, 아이디/비밀번호 검증), 로그인(실패 시 정보 비노출), 로그아웃, 삭제된 사용자 세션 거부, 화면용 의존성의 리다이렉트 | A |
-| `tests/test_chat.py` | 16 | 로그인 필요, 빈 입력·2,000자 검증, 저장, AI 실패 시 미저장, 최근 5개 컨텍스트와 사용자 격리, 타임아웃 504·실패 502·DB 실패 500, AI 키 미설정 시 503 과 입력 검증 우선, 로그 이벤트와 `request_id`, 민감정보 비노출 | B |
+| `tests/test_auth.py` | 20 | 가입(해시 저장, 중복, 아이디/비밀번호 검증), 로그인(실패 시 정보 비노출), 로그아웃, 삭제된 사용자 세션 거부, 화면용 의존성의 리다이렉트 | A |
+| `tests/test_chat.py` | 91 | 인증·입력 검증·저장·DB rollback, 최근 5개 컨텍스트와 사용자 격리, Codyssey/Gemini SDK 오류 분류, fallback 실행·제외·최종 오류 정책, 공급자별 로그와 동일 `request_id`, 설정·캐시 격리, 민감정보 비노출 | B |
 | `tests/test_pages.py` | 7 | `/` 리다이렉트, 가입·로그인 페이지 렌더링, 정적 파일, `/chat` 접근 제어 | C |
 | `tests/test_logs.py` | 11 | `/api/me/chats` 로그인 필요·본인 로그만·정렬·limit/offset·범위 검증·`before_id` 이어 불러오기·`all` 전체 받기, `/history` 접근 제어·KST 표시·빈 상태·페이지 나누기, `check_logs.sql` 실행 결과 | C |
 | `tests/test_admin.py` | 10 | `/admin` 비밀번호 미설정 시 404, 미인증·틀린 인증 401, 일반 로그인으로는 접근 불가, 전체 사용자·로그 표시와 최신순, 해시 원문 비노출, 사용자 필터, 빈 상태 | C |
 
 - `tests/conftest.py` 가 앱 import 전에 `SECRET_KEY` 와 임시 `DATABASE_URL` 을 환경 변수로 지정해 개발자의 `.env` 와 `app.db` 를 건드리지 않습니다.
-- AI 호출은 FastAPI `dependency_overrides` 로 가짜 클라이언트(`FakeAIClient`)를 주입해 실제 네트워크 요청 없이 성공·타임아웃·실패를 재현합니다.
+- AI 호출은 FastAPI `dependency_overrides`와 주입 가능한 가짜 SDK/공급자 클라이언트를 사용해 실제 네트워크 요청 없이 Codyssey 성공, 조건별 Gemini fallback, 두 공급자 실패를 재현합니다.

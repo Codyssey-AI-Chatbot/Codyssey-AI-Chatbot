@@ -23,6 +23,13 @@ class Settings(BaseSettings):
     ai_model: str = "gpt-5.4"
     ai_timeout_seconds: float = 20
 
+    # Gemini 는 기본 AI 공급자의 일시 장애에 대비한 선택적 fallback 이다.
+    # 키와 모델이 모두 설정된 경우에만 후속 단계에서 클라이언트를 연결한다.
+    gemini_api_key: SecretStr | None = None
+    gemini_model: str | None = None
+    gemini_timeout_seconds: float = 20
+    ai_fallback_enabled: bool = True
+
     # 관리자 페이지(/admin) 비밀번호. 비어 있으면 관리자 페이지를 끈다(404). (C 가 추가)
     admin_password: SecretStr | None = None
 
