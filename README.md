@@ -392,6 +392,43 @@ erDiagram
 - **외래키**: SQLite 는 기본적으로 외래키를 검사하지 않으므로 연결마다 `PRAGMA foreign_keys=ON` 을 켭니다 (`app/db.py`).
 - **시각**: 저장은 UTC 로 통일하고, 표시할 때만 KST 로 바꿉니다. SQLite 는 시간대를 저장하지 않으므로 읽을 때 UTC 를 다시 붙입니다 (`app/routers/logs.py` 의 `as_utc`).
 
+### 왜 SQLite 인가 (DBMS 비교)
+
+**1. SQLite 와 서버형 DBMS 의 차이**
+
+| 구분 | SQLite | PostgreSQL / MySQL |
+|---|---|---|
+| 구조 | 앱 프로세스 안의 라이브러리, 데이터는 파일 하나 | 별도 서버 프로세스, 네트워크 접속 |
+| 쿼리 비용 | 함수 호출 | 앱 ↔ 서버 메시지 왕복 |
+| 동시 쓰기 | 한 번에 한 작성자, 나머지는 순서 대기 | MVCC 기반 동시 처리 |
+| 운영 | 서버·계정 설정 없음 | 설치, 계정, 백업 관리 필요 |
+
+**2. 이 서비스에 SQLite 가 맞는 이유**
+
+- **DB 가 병목이 아님**: 응답 시간 대부분이 외부 AI API 호출이고 DB 작업은 조회와 INSERT 1회 수준이라, DB 를 바꿔도 전체 속도 개선은 한계가 있음 (암달의 법칙). 구간별 시간을 측정하지는 않았으므로 추정임
+- **쓰기가 적고 짧음**: 쓰기는 가입과 대화 저장의 1행 INSERT 뿐이고, 쓰기 트랜잭션이 수 ms 수준이라 순서 대기로 충분함
+- **작은 규모**: 테이블 2개, 텍스트 중심 데이터 (SQLite 최대 DB 크기 281TB)
+- **트랜잭션 보장**: 커밋은 원자적이고 격리 수준은 직렬화 가능(SERIALIZABLE)이며, 쓰기를 실제로 직렬화해서 동시 쓰기 결과가 단순함
+- **운영 단순성**: 서버·포트·DB 계정이 없어 장애 지점과 공격 표면이 작고, 테스트는 임시 파일 DB 로 어디서나 재현 가능함
+
+**3. 단점과 대응**
+
+| SQLite 의 약점 | 이 프로젝트의 대응 |
+|---|---|
+| 외래키 검사가 기본으로 꺼져 있음 | 연결마다 `PRAGMA foreign_keys=ON` (`app/db.py`) |
+| 시간대를 저장하지 않음 | UTC 로 저장하고 읽을 때 UTC 를 다시 붙임 (`as_utc`) |
+| 타입이 느슨함 | SQLAlchemy 모델과 pydantic 입력 검증으로 앱 계층에서 강제 |
+| 동시 쓰기 한계 | 쓰기가 짧아 현재는 충분함, 부하가 커지면 WAL 전환 또는 PostgreSQL |
+
+**4. 한계와 전환 조건**
+
+- 앱 서버가 여러 대이거나, 동시 쓰기가 많거나, 데이터가 매우 크면 서버형 DB 로 전환 (SQLite 공식 문서 기준)
+- 이 프로젝트의 가장 큰 한계는 배포 환경(Render 무료 플랜)의 디스크 초기화 (6절 참고)
+- PostgreSQL 전환 시 `DATABASE_URL` 변경과 드라이버 추가가 필요하며, 실제 실행 확인은 하지 않음
+- 스키마 변경 시 `create_all` 이 기존 테이블의 컬럼 변경을 반영하지 않음 (마이그레이션 도구 미사용)
+
+**참고 자료**: [Appropriate Uses For SQLite](https://www.sqlite.org/whentouse.html) · [Many Small Queries](https://www.sqlite.org/np1queryprob.html) · [Isolation In SQLite](https://www.sqlite.org/isolation.html) · [Atomic Commit](https://www.sqlite.org/atomiccommit.html) · [Datatypes](https://www.sqlite.org/datatype3.html) · [PostgreSQL MVCC](https://www.postgresql.org/docs/current/mvcc-intro.html) · [MySQL InnoDB Multi-Versioning](https://dev.mysql.com/doc/refman/8.0/en/innodb-multi-versioning.html)
+
 ---
 
 ## 5. 실행 방법 (로컬)
